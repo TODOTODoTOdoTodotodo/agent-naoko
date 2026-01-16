@@ -1,3 +1,5 @@
+![Naoko](magi.jpg)
+
 # Naoko: 듀얼 에이전트 AI 아키텍트 시스템
 
 ![Python](https://img.shields.io/badge/Python-3.9%2B-blue)
