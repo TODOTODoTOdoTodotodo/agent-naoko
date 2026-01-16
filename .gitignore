@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+.DS_Store
+.venv/
+.env
+.naoko_env
+artifacts/*
+!artifacts/.gitkeep
