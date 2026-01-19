@@ -13,6 +13,8 @@ class GeminiClient:
         self.root_dir = root_dir
         self.artifacts_dir = self.root_dir / "artifacts"
         self.dry_run = dry_run
+        self.primary_model = "gemini-3"
+        self.fallback_model = "gemini-2.5"
         
         if not self.dry_run:
             try:
@@ -22,38 +24,44 @@ class GeminiClient:
                 console.print("[red][Gemini] 'gemini' CLI command not found. Agent disabled.[/red]")
                 self.dry_run = True
 
+    def _call_gemini_cli_once(self, prompt: str, timeout_sec: int, model: str) -> tuple[str, str, int]:
+        command = ["gemini", "--output-format", "text", "--model", model]
+        try:
+            console.print(f"[dim][Gemini CLI] Executing command via STDIN (Model: {model})...[/dim]")
+            result = subprocess.run(
+                command,
+                input=prompt,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                timeout=timeout_sec,
+            )
+            return result.stdout.strip(), result.stderr.strip(), result.returncode
+        except subprocess.TimeoutExpired:
+            return "", "timeout", 124
+        except Exception as e:
+            return "", str(e), 1
+
     def _call_gemini_cli(self, prompt: str, timeout_sec: int = 1800) -> str:
         """
         Executes 'gemini' CLI using STDIN to avoid argument length limits.
         """
         if self.dry_run: return ""
 
-        command = ["gemini", "--output-format", "text"]
-        
-        try:
-            console.print(f"[dim][Gemini CLI] Executing command via STDIN (Length: {len(prompt)} chars)...[/dim]")
-            
-            result = subprocess.run(
-                command, 
-                input=prompt,
-                capture_output=True, 
-                text=True, 
-                encoding='utf-8', 
-                timeout=timeout_sec
-            )
-            
-            if result.returncode != 0:
-                console.print(f"[red][Gemini CLI] Error: {result.stderr.strip()}[/red]")
-                return ""
-            
-            return result.stdout.strip()
-
-        except subprocess.TimeoutExpired:
+        console.print(f"[dim][Gemini CLI] Executing command via STDIN (Length: {len(prompt)} chars)...[/dim]")
+        stdout, stderr, code = self._call_gemini_cli_once(prompt, timeout_sec, self.primary_model)
+        if code == 0:
+            return stdout
+        if "RESOURCE_EXHAUSTED" in stderr or "quota" in stderr.lower() or "rate limit" in stderr.lower():
+            console.print(f"[yellow][Gemini CLI] Quota/limit reached. Retrying with {self.fallback_model}...[/yellow]")
+            stdout, stderr, code = self._call_gemini_cli_once(prompt, timeout_sec, self.fallback_model)
+            if code == 0:
+                return stdout
+        if stderr == "timeout":
             console.print(f"[red][Gemini CLI] Timeout expired.[/red]")
             return ""
-        except Exception as e:
-            console.print(f"[red][Gemini CLI] Execution failed: {e}[/red]")
-            return ""
+        console.print(f"[red][Gemini CLI] Error: {stderr}[/red]")
+        return ""
 
     def analyze_style(self, entry_point: str) -> str:
         """
