@@ -139,12 +139,17 @@ class CodexClient:
         expected_class: str | None = None,
     ) -> str:
         command = ["codex", "exec", "-m", self.model, "-c", "reasoning.effort=\"medium\"", "-"]
+        cli_prompt = (
+            "SYSTEM: You are a code generator. Output ONLY the complete Java file content. "
+            "Do NOT ask questions. Do NOT include analysis or markdown.\n\n"
+            f"{prompt}"
+        )
         stop_event, start = self._start_wait_timer("Codex CLI waiting")
         try:
             console.print(f"[magenta][Codex CLI] Executing command via STDIN...[/magenta]")
             result = subprocess.run(
                 command,
-                input=prompt,
+                input=cli_prompt,
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
