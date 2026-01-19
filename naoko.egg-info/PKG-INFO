@@ -1,0 +1,15 @@
+Metadata-Version: 2.4
+Name: naoko
+Version: 0.1.0
+Summary: Dual-Agent AI Architect System for Automated Coding
+Requires-Python: >=3.9
+Requires-Dist: typer
+Requires-Dist: rich
+Requires-Dist: pandas
+Requires-Dist: openpyxl
+Requires-Dist: pypdf
+Requires-Dist: python-pptx
+Requires-Dist: google-generativeai
+Requires-Dist: google-auth-oauthlib
+Requires-Dist: google-auth-httplib2
+Requires-Dist: requests

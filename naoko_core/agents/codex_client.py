@@ -42,202 +42,132 @@ class CodexClient:
         console.print("[yellow][Codex] Switching to Gemini CLI (Fallback)...[/yellow]")
         try:
             command = ["gemini", "--output-format", "text"]
-            result = subprocess.run(
-                command, 
-                input=prompt,
-                capture_output=True, 
-                text=True, 
-                encoding='utf-8', 
-                timeout=120
-            )
+            result = subprocess.run(command, input=prompt, capture_output=True, text=True, encoding='utf-8', timeout=120)
             if result.returncode == 0:
                 return self._clean_code(result.stdout)
-            else:
-                console.print(f"[red][Codex-Fallback] Gemini failed: {result.stderr.strip()}[/red]")
         except Exception as e:
             console.print(f"[red][Codex-Fallback] Error: {e}[/red]")
         return ""
 
     def _call_codex_cli(self, prompt: str) -> str:
-        command = ["codex", "prompt", prompt, "--model", "gpt-5.2_codex-medium"]
+        command = ["codex", "prompt", prompt, "--model", self.model]
         try:
             console.print(f"[magenta][Codex CLI] Executing command...[/magenta]")
-            result = subprocess.run(
-                command, 
-                capture_output=True, 
-                text=True, 
-                encoding='utf-8', 
-                timeout=120
-            )
-            if result.returncode != 0:
-                console.print(f"[red][Codex CLI] Error: {result.stderr.strip()}[/red]")
-                return ""
-            return self._clean_code(result.stdout)
+            result = subprocess.run(command, capture_output=True, text=True, encoding='utf-8', timeout=120)
+            if result.returncode == 0:
+                return self._clean_code(result.stdout)
+            return ""
         except Exception as e:
             console.print(f"[red][Codex CLI] Execution failed: {e}[/red]")
             return ""
 
     def _generate_code(self, prompt: str) -> str:
         if self.dry_run: return ""
-
         if self.has_codex_cli:
             code = self._call_codex_cli(prompt)
             if code: return code
-            console.print("[red][Codex] CLI execution failed. Trying API/Fallback.[/red]")
 
         failures = 0
         max_retries = 3
-        
-        system_prompt = (
-            "You are an expert Java developer. Output ONLY the raw Java code. No markdown.\n"
-            "Rules:\n"
-            "1. Package declaration MUST match the directory structure (e.g., 'package com.example;').\n"
-            "2. Ensure the file ends with a newline character."
-        )
+        system_prompt = "You are an expert Java developer. Output ONLY raw Java code. Follow style guides strictly."
 
         while failures < max_retries:
-            if not self.token:
-                console.print("[yellow][Codex] No token found. Skipping to fallback.[/yellow]")
-                failures = max_retries
-                break
-
+            if not self.token: break
             try:
-                console.print(f"[magenta][Codex] API Request (Attempt {failures+1}/{max_retries})...")
-                headers = {
-                    "Authorization": f"Bearer {self.token}",
-                    "Content-Type": "application/json"
-                }
+                console.print(f"[magenta][Codex] API Request (Attempt {failures+1}/3)...[/magenta]")
+                headers = {"Authorization": f"Bearer {self.token}", "Content-Type": "application/json"}
                 payload = {
                     "model": self.model,
-                    "messages": [
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": prompt}
-                    ],
+                    "messages": [{"role": "system", "content": system_prompt}, {"role": "user", "content": prompt}],
                     "temperature": 0.2
                 }
-                
                 response = requests.post(self.api_url, json=payload, headers=headers, timeout=60)
-                
                 if response.status_code == 200:
-                    data = response.json()
-                    content = data["choices"][0]["message"]["content"]
-                    return self._clean_code(content)
-                else:
-                    console.print(f"[yellow][Codex] API Error {response.status_code}: {response.text}[/yellow]")
-                    failures += 1
-            
-            except Exception as e:
-                console.print(f"[yellow][Codex] Connection Error: {e}[/yellow]")
+                    return self._clean_code(response.json()["choices"][0]["message"]["content"])
                 failures += 1
-                time.sleep(2)
+            except Exception:
+                failures += 1
+                time.sleep(1)
 
-        console.print("[red][Codex] All API attempts failed.[/red]")
-        fallback_prompt = f"{system_prompt}\n\nUser Request:\n{prompt}"
-        return self._call_gemini_fallback(fallback_prompt)
+        return self._call_gemini_fallback(f"{system_prompt}\n\n{prompt}")
 
-    def implement(self, req_path: str, style_guide_path: str = None) -> tuple[str, bool]:
+    def implement(self, req_path: str, style_guide_path: str = None, target_file: str = None) -> tuple[str, bool]:
+        """
+        Implements code into the specified target_file (Entry Point).
+        """
         console.print(f"[magenta]Codex Agent:[/magenta] Reading requirements from '{req_path}'...")
         
         output_path = self.artifacts_dir / "patch.diff"
-        target_path = self.root_dir / "src" / "main" / "java" / "com" / "example" / "User.java"
         
+        # 1. Determine Target Path (Priority: target_file > style_guide_dir > Default)
+        if target_file and os.path.exists(target_file):
+            target_path = Path(target_file)
+        elif style_guide_path:
+            # Fallback to a file in the same directory as style guide
+            target_path = Path(style_guide_path).parent / "ArticleController.java" # Heuristic
+        else:
+            target_path = self.root_dir / "src" / "main" / "java" / "com" / "example" / "User.java"
+
         if self.dry_run: return str(output_path), True
 
-        if not req_path or not os.path.exists(req_path):
-             return str(output_path), False
-             
+        # 2. Read Requirements and Old Code
         with open(req_path, 'r') as f: req_content = f.read()
         
-        style_instruction = ""
-        if style_guide_path and os.path.exists(style_guide_path):
-            console.print(f"[magenta]Codex Agent:[/magenta] Loading style guide from '{style_guide_path}'...")
-            with open(style_guide_path, 'r') as f:
-                style_content = f.read()
-            style_instruction = f"Strictly follow these CODING STYLE GUIDELINES:\n{style_content}\n\n"
-        
-        target_path.parent.mkdir(parents=True, exist_ok=True)
         if not target_path.exists():
-            target_path.write_text("package com.example;\n\npublic class User {\n    private String username;\n}\n", encoding="utf-8")
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+            target_path.write_text("// New File\n", encoding="utf-8")
         
         old_content = target_path.read_text(encoding="utf-8")
         
+        # 3. Load Style Guide
+        style_instruction = ""
+        if style_guide_path and os.path.exists(style_guide_path):
+            console.print(f"[magenta]Codex Agent:[/magenta] Applying style guide from '{style_guide_path}'...")
+            style_instruction = f"STYLE GUIDELINES:\n{Path(style_guide_path).read_text()}\n\n"
+        
+        # 4. Generate Code
         prompt = (
             f"{style_instruction}"
             f"Requirements:\n{req_content}\n\n"
-            f"Current Code (User.java):\n{old_content}\n\n"
-            f"Task: Implement the requirements by updating the existing code.\n"
-            f"Return the COMPLETE, valid Java file content."
+            f"Current File ({target_path.name}):\n{old_content}\n\n"
+            f"Task: Update the file to implement requirements. Return COMPLETE code."
         )
 
         new_content = self._generate_code(prompt)
-        
-        if not new_content:
-            console.print("[red][Codex] Failed to generate code.[/red]")
-            return str(output_path), False
+        if not new_content: return str(output_path), False
 
+        # 5. Generate Diff and Overwrite
         diff_gen = difflib.unified_diff(
             old_content.splitlines(keepends=True),
             new_content.splitlines(keepends=True),
-            fromfile="a/src/main/java/com/example/User.java",
-            tofile="b/src/main/java/com/example/User.java",
+            fromfile=f"a/{target_path.name}", tofile=f"b/{target_path.name}"
         )
-        diff_content = "".join(diff_gen)
-        with open(output_path, "w", encoding="utf-8") as f:
-            f.write(diff_content)
+        with open(output_path, "w", encoding="utf-8") as f: f.write("".join(diff_gen))
 
-        console.print(f"[magenta][Codex] Updating file: {target_path}[/magenta]")
+        console.print(f"[magenta]Codex Agent:[/magenta] Updating file: [bold]{target_path}[/bold]")
         target_path.write_text(new_content, encoding="utf-8")
         
+        # Store last target path for refine phase
+        self.last_target_path = target_path
         return str(output_path), True
 
     def refine(self, review_path: str) -> tuple[str, str]:
         console.print(f"[magenta]Codex Agent:[/magenta] Analyzing review feedback...")
-        
         output_path = self.artifacts_dir / "review_judgement.md"
-        status = "SUITABLE"
         
-        if self.dry_run: return str(output_path), status
+        if not os.path.exists(review_path): return str(output_path), "FAILED"
+        review_content = Path(review_path).read_text()
 
-        if not os.path.exists(review_path):
-             console.print("[red][Codex] Review file missing. Aborting refine.[/red]")
-             return str(output_path), "FAILED"
-
-        with open(review_path, 'r') as f: review_content = f.read()
-
-        if "Issue" in review_content or "Bug" in review_content or "Missing" in review_content:
-            status = "CHANGES_NEEDED"
+        status = "CHANGES_NEEDED" if any(k in review_content for k in ["Issue", "Bug", "Missing"]) else "SUITABLE"
         
-        if status == "CHANGES_NEEDED":
-            console.print(f"[magenta]Codex Agent:[/magenta] Applying fixes...")
-            patch_path = self.artifacts_dir / "patch.diff"
-            target_path = self.root_dir / "src" / "main" / "java" / "com" / "example" / "User.java"
-            
-            old_content = target_path.read_text(encoding="utf-8")
-            
-            prompt = (
-                f"Review Feedback:\n{review_content}\n\n"
-                f"Current Code:\n{old_content}\n\n"
-                f"Task: Fix the code based on the review.\n"
-                f"Return the COMPLETE, valid Java file content."
-            )
-            
+        if status == "CHANGES_NEEDED" and hasattr(self, 'last_target_path'):
+            console.print(f"[magenta]Codex Agent:[/magenta] Fixing issues in {self.last_target_path}...")
+            old_content = self.last_target_path.read_text()
+            prompt = f"Fix issues in this code based on review.\nReview: {review_content}\nCode:\n{old_content}"
             new_content = self._generate_code(prompt)
             
             if new_content and new_content.strip() != old_content.strip():
-                diff_gen = difflib.unified_diff(
-                    old_content.splitlines(keepends=True),
-                    new_content.splitlines(keepends=True),
-                    fromfile="a/src/main/java/com/example/User.java",
-                    tofile="b/src/main/java/com/example/User.java",
-                )
-                with open(patch_path, "w", encoding="utf-8") as f:
-                    f.write("".join(diff_gen))
-                
-                target_path.write_text(new_content, encoding="utf-8")
-            else:
-                pass
-
-        with open(output_path, "w") as f:
-            f.write(f"JUDGEMENT: {status}\nReason: Processed by Agent.")
-
+                self.last_target_path.write_text(new_content, encoding="utf-8")
+        
+        with open(output_path, "w") as f: f.write(f"JUDGEMENT: {status}")
         return str(output_path), status

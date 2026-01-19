@@ -42,8 +42,8 @@ class Orchestrator:
 
         # 2. Implementation
         self.console.print(Panel.fit("Phase 2: Implementation", border_style="magenta"))
-        # Pass entry_point as target_file
-        patch_path, applied = self.codex.implement(req_path, style_guide_path, self.entry_point)
+        # Pass style guide if available
+        patch_path, applied = self.codex.implement(req_path, style_guide_path)
         
         if not applied:
             self.console.print("[bold red]Critical Error: Implementation patch failed to apply. Aborting.[/bold red]")
