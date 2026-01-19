@@ -103,7 +103,7 @@ class CodexClient:
     def _call_gemini_fallback(
         self,
         prompt: str,
-        timeout_sec: int = 1200,
+        timeout_sec: int = 1800,
         expected_class: str | None = None,
     ) -> str:
         console.print("[yellow][Codex] Switching to Gemini CLI (Fallback)...[/yellow]")
@@ -135,7 +135,7 @@ class CodexClient:
     def _call_codex_cli(
         self,
         prompt: str,
-        timeout_sec: int = 1200,
+        timeout_sec: int = 1800,
         expected_class: str | None = None,
     ) -> str:
         command = ["codex", "exec", "-m", self.model, "-c", "reasoning.effort=\"medium\"", "-"]
@@ -186,9 +186,9 @@ class CodexClient:
     def _generate_code(
         self,
         prompt: str,
-        codex_timeout_sec: int = 1200,
-        api_timeout_sec: int = 1200,
-        gemini_timeout_sec: int = 1200,
+        codex_timeout_sec: int = 1800,
+        api_timeout_sec: int = 1800,
+        gemini_timeout_sec: int = 1800,
         expected_class: str | None = None,
     ) -> str:
         if self.dry_run: return ""
@@ -292,7 +292,7 @@ class CodexClient:
             prompt,
             codex_timeout_sec=3600,
             api_timeout_sec=3600,
-            gemini_timeout_sec=1200,
+            gemini_timeout_sec=1800,
             expected_class=expected_class,
         )
         if not new_content:

@@ -22,7 +22,7 @@ class GeminiClient:
                 console.print("[red][Gemini] 'gemini' CLI command not found. Agent disabled.[/red]")
                 self.dry_run = True
 
-    def _call_gemini_cli(self, prompt: str, timeout_sec: int = 180) -> str:
+    def _call_gemini_cli(self, prompt: str, timeout_sec: int = 1800) -> str:
         """
         Executes 'gemini' CLI using STDIN to avoid argument length limits.
         """
