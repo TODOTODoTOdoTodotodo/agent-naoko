@@ -27,6 +27,11 @@ class Orchestrator:
 
         # 1. Planning
         req_path = self.gemini.plan(self.doc_path)
+        
+        # Validation: Check if requirements generated successfully
+        if not req_path or not os.path.exists(req_path) or os.path.getsize(req_path) == 0:
+            self.console.print("[red]Critical Error: Planning failed. Requirement file is empty or missing.[/red]")
+            return
 
         # 2. Implementation
         self.console.print(Panel.fit("Phase 2: Implementation", border_style="magenta"))

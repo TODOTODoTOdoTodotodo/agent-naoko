@@ -3,6 +3,7 @@ import time
 import os
 from pathlib import Path
 from ..io.git_ops import GitOps
+from ..auth import AuthManager
 
 console = Console()
 
@@ -11,6 +12,9 @@ class CodexClient:
         self.root_dir = root_dir
         self.artifacts_dir = self.root_dir / "artifacts"
         self.dry_run = dry_run
+        
+        # Load Auth Token
+        self.token = AuthManager.get_codex_token()
         
         if not self.dry_run:
             os.makedirs(self.artifacts_dir, exist_ok=True)
@@ -25,11 +29,13 @@ class CodexClient:
         
         if not self.dry_run:
             time.sleep(1)
-            # Create a valid-looking unified diff
+            # Create a valid unified diff (Simulation: Initial State)
+            # Assuming src/main/java/com/example/User.java exists from previous steps
             diff_content = (
                 "--- a/src/main/java/com/example/User.java\n"
                 "+++ b/src/main/java/com/example/User.java\n"
-                "@@ -10,5 +10,6 @@\n"
+                "@@ -2,4 +2,5 @@\n"
+                " \n"
                 " public class User {\n"
                 "     private String username;\n"
                 "+    private String bio;\n"
@@ -47,8 +53,6 @@ class CodexClient:
     def refine(self, review_path: str) -> tuple[str, str]:
         """
         Analyzes the review and decides the next action.
-        Returns: (judgement_file_path, status_code)
-        Status Codes: SUITABLE, CHANGES_NEEDED, HOLD, UNNECESSARY, FAILED
         """
         console.print(f"[magenta]Codex Agent:[/magenta] Analyzing review feedback from '{review_path}'...")
         
@@ -69,18 +73,40 @@ class CodexClient:
                 status = "SUITABLE"
 
             if status == "CHANGES_NEEDED":
-                 console.print(f"[magenta]Codex Agent:[/magenta] Applying fixes...")
+                 console.print(f"[magenta]Codex Agent:[/magenta] Applying fixes (Regenerating patch)...")
                  patch_path = self.artifacts_dir / "patch.diff"
-                 # Simulate appending more changes to the diff
-                 with open(patch_path, "a") as f:
-                     f.write("+    // Fix: Added validation\n")
                  
+                 # Fix: Do NOT append. Regenerate the FULL valid diff.
+                 # Simulation: Adding validation comment and fields properly
+                 new_diff_content = (
+                    "--- a/src/main/java/com/example/User.java\n"
+                    "+++ b/src/main/java/com/example/User.java\n"
+                    "@@ -2,4 +2,6 @@\n"
+                    " \n"
+                    " public class User {\n"
+                    "     private String username;\n"
+                    "+    private String bio;\n"
+                    "+    // Fix: Added validation logic\n"
+                    " }\n"
+                 )
+                 
+                 # First, revert the previous patch to apply the new one cleanly (or assume git handles it if context matches)
+                 # For simplicity in simulation, we assume we are applying to the original state 
+                 # OR we need to reverse the previous patch. 
+                 # Here, we will try to apply. If it fails due to conflict, we might need a reset strategy.
+                 # Let's write the NEW patch.
+                 with open(patch_path, "w") as f:
+                     f.write(new_diff_content)
+                 
+                 # In a real scenario, we might need `git apply -R` first or `git checkout`.
+                 # We will assume the user has a clean slate or we use `git apply --reject`
+                 # For this sim, let's try applying directly.
                  applied = GitOps.apply_patch(str(patch_path), self.dry_run)
                  if not applied:
                      status = "FAILED"
 
             with open(output_path, "w") as f:
-                f.write(f"JUDGEMENT: {status}\nReason: Addressing review or final check.")
+                f.write(f"JUDGEMENT: {status}\nReason: Addressing review.")
 
         console.print(f"[magenta]Codex Agent:[/magenta] Judgement: {status}")
         return str(output_path), status

@@ -3,3 +3,4 @@ rich
 pandas
 openpyxl
 pypdf
+python-pptx
