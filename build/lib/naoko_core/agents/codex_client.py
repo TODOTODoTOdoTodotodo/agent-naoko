@@ -42,9 +42,13 @@ class CodexClient:
                 return ""
             return cleaned
         java_start_pattern = r"(package\\s+[\\w\\.]+;|import\\s+[\\w\\.]+;|public\\s+(?:class|interface|enum)\\s+\\w+)"
-        match = re.search(java_start_pattern, text)
+        stripped = re.sub(r"^\\s*(?:(//[^\\n]*\\n)|(/\\*.*?\\*/\\s*))+",
+                          "",
+                          text,
+                          flags=re.DOTALL)
+        match = re.search(java_start_pattern, stripped)
         if match:
-            cleaned = text[match.start():].strip()
+            cleaned = stripped[match.start():].strip()
             if expected_class and not re.search(rf"\\b(class|interface|enum)\\s+{re.escape(expected_class)}\\b", cleaned):
                 return ""
             return cleaned
