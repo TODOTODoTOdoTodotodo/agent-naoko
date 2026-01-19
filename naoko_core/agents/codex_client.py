@@ -44,7 +44,7 @@ class CodexClient:
         if matches:
             # Return the longest block, assuming it's the main code
             cleaned = max(matches, key=len).strip()
-            if expected_class and not re.search(rf"\\b(class|interface|enum)\\s+{re.escape(expected_class)}\\b", cleaned):
+            if expected_class and not self._has_expected_class(cleaned, expected_class):
                 self.last_error = f"Expected class '{expected_class}' not found in code block."
                 return ""
             return cleaned
@@ -59,7 +59,7 @@ class CodexClient:
         match = re.search(java_start_pattern, stripped)
         if match:
             cleaned = stripped[match.start():].strip()
-            if expected_class and not re.search(rf"\\b(class|interface|enum)\\s+{re.escape(expected_class)}\\b", cleaned):
+            if expected_class and not self._has_expected_class(cleaned, expected_class):
                 self.last_error = f"Expected class '{expected_class}' not found in output."
                 return ""
             return cleaned
@@ -68,6 +68,13 @@ class CodexClient:
             self.last_error = f"Expected class '{expected_class}' not found in output."
             return ""
         return text.strip()
+
+    def _has_expected_class(self, text: str, expected_class: str) -> bool:
+        if re.search(rf"\\b(class|interface|enum)\\s+{re.escape(expected_class)}\\b", text):
+            return True
+        if "@RestController" in text and expected_class in text:
+            return True
+        return False
 
     def _log_error(self, message: str) -> None:
         if not message:
@@ -270,6 +277,7 @@ class CodexClient:
             f"Task: Implement the requirements into this file.\n"
             f"Constraints:\n"
             f"- Output ONLY the complete Java file content for {target_path.name}.\n"
+            f"- You MUST include `public class {expected_class}` in the output.\n"
             f"- Do NOT remove any existing code unless specified.\n"
             f"- Do NOT return a diff, markdown fences, or review/analysis text."
         )
@@ -347,6 +355,7 @@ class CodexClient:
                 f"Task: Fix the code based on the review.\n"
                 f"Constraints:\n"
                 f"- Output ONLY the complete Java file content for {self.last_target_path.name}.\n"
+                f"- You MUST include `public class {expected_class}` in the output.\n"
                 f"- Preserve unrelated logic.\n"
                 f"- Do NOT return analysis, review text, or markdown fences."
             )
