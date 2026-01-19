@@ -49,7 +49,7 @@ class GeminiClient:
         """
         if self.dry_run: return ""
 
-        sanitized_prompt = re.sub(r"(?m)^@", r"\\@", prompt)
+        sanitized_prompt = re.sub(r"@", r"\\@", prompt)
         console.print(f"[dim][Gemini CLI] Executing command via STDIN (Length: {len(sanitized_prompt)} chars)...[/dim]")
         stdout, stderr, code = self._call_gemini_cli_once(sanitized_prompt, timeout_sec, self.primary_model)
         if code == 0:
@@ -96,7 +96,7 @@ class GeminiClient:
                 console.print(f"[yellow]Skipped file {file_path}: {e}[/yellow]")
 
         # 3. Call Gemini via CLI
-        sys_inst = "You are a Tech Lead. Analyze the code to extract the project's Coding Style Guidelines."
+        sys_inst = "You are a Tech Lead. Analyze the code to extract the project's Coding Style Guidelines. Do not call tools."
         prompt = (
             f"{sys_inst}\n\n"
             f"Analyze the following source code files and document the coding style conventions.\n"
@@ -132,7 +132,7 @@ class GeminiClient:
         
         system_instruction = (
             "You are a Senior Software Architect. Analyze the provided planning document text "
-            "and generate a detailed development request in Markdown format."
+            "and generate a detailed development request in Markdown format. Do not call tools."
         )
         
         full_prompt = (
@@ -183,6 +183,8 @@ class GeminiClient:
             "- Q: <question> | Example: <short suggested answer> | Required: yes/no\n\n"
             "Review Focus:\n"
             "- Verify the controller file contains only the target controller class (no extra top-level classes).\n\n"
+            "Constraints:\n"
+            "- Do not call tools.\n\n"
             f"Requirements:\n{req_content}\n\n"
             f"Current Code Implementation:\n{current_code}\n"
         )
