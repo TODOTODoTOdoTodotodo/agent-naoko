@@ -15,7 +15,7 @@ class GeminiClient:
         self.artifacts_dir = self.root_dir / "artifacts"
         self.dry_run = dry_run
         self.primary_model = "gemini-3"
-        self.fallback_models = ["gemini-2.5-pro", "gemini-2.5-flash"]
+        self.fallback_models = ["gemini-3.0-flash", "gemini-2.5-pro", "gemini-2.5-flash"]
         
         if not self.dry_run:
             try:
@@ -55,13 +55,15 @@ class GeminiClient:
         if code == 0:
             return stdout
         if "TerminalQuotaError" in stderr or "quota" in stderr.lower() or "rate limit" in stderr.lower():
-            for fallback in self.fallback_models:
-                console.print(f"[yellow][Gemini CLI] Quota/limit reached. Retrying with {fallback}...[/yellow]")
-                stdout, stderr, code = self._call_gemini_cli_once(sanitized_prompt, timeout_sec, fallback)
-                if code == 0:
-                    return stdout
-                if "ModelNotFound" not in stderr:
-                    break
+            console.print("[red][Gemini CLI] Quota exhausted. Stop for today.[/red]")
+            return ""
+        for fallback in self.fallback_models:
+            console.print(f"[yellow][Gemini CLI] Retrying with {fallback}...[/yellow]")
+            stdout, stderr, code = self._call_gemini_cli_once(sanitized_prompt, timeout_sec, fallback)
+            if code == 0:
+                return stdout
+            if "ModelNotFound" not in stderr:
+                break
         if stderr == "timeout":
             console.print(f"[red][Gemini CLI] Timeout expired.[/red]")
             return ""
