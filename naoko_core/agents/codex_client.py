@@ -283,6 +283,7 @@ class CodexClient:
             f"Constraints:\n"
             f"- Output ONLY the complete Java file content for {target_path.name}.\n"
             f"- You MUST include `public class {expected_class}` in the output.\n"
+            f"- Preserve formatting, line breaks, ordering, and existing elements unless a change is required by the new endpoint.\n"
             f"- Do NOT remove any existing code unless specified.\n"
             f"- Do NOT return a diff, markdown fences, or review/analysis text."
         )
@@ -361,6 +362,7 @@ class CodexClient:
                 f"Constraints:\n"
                 f"- Output ONLY the complete Java file content for {self.last_target_path.name}.\n"
                 f"- You MUST include `public class {expected_class}` in the output.\n"
+                f"- Preserve formatting, line breaks, ordering, and existing elements unless required by the fix.\n"
                 f"- Preserve unrelated logic.\n"
                 f"- Do NOT return analysis, review text, or markdown fences."
             )
