@@ -115,10 +115,3 @@ naoko start ./docs/feature_req.pdf --entry-point src/main/java/com/example/UserC
 - **코드 스타일 분석:** 기존 프로젝트 분석 및 `CODING_STYLE.md` 기반 개발 지원.
 - **안정성:** STDIN 파이프 방식 도입으로 대용량 컨텍스트 처리 지원 및 Overwrite 전략으로 패치 오류 해결.
 
-## 🤝 기여 방법
-
-1. 프로젝트 Fork
-2. 기능 브랜치 생성 (`git checkout -b feat/AmazingFeature`)
-3. 변경사항 커밋 (`git commit -m 'feat: Add some AmazingFeature'`)
-4. 브랜치 푸시 (`git push origin master`)
-5. Pull Request 생성
