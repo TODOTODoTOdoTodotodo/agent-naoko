@@ -15,7 +15,7 @@ class GeminiClient:
         self.artifacts_dir = self.root_dir / "artifacts"
         self.dry_run = dry_run
         self.primary_model = "gemini-3"
-        self.fallback_models = ["gemini-3.0-flash", "gemini-2.5-pro", "gemini-2.5-flash"]
+        self.fallback_models = ["gemini-3-flash-preview", "gemini-2.5-pro", "gemini-2.5-flash"]
         
         if not self.dry_run:
             try:
