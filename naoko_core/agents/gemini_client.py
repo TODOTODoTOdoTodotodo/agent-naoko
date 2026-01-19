@@ -49,12 +49,12 @@ class GeminiClient:
         """
         if self.dry_run: return ""
 
-        sanitized_prompt = re.sub(r"@", r"\\@", prompt)
+        sanitized_prompt = re.sub(r"@", "＠", prompt)
         console.print(f"[dim][Gemini CLI] Executing command via STDIN (Length: {len(sanitized_prompt)} chars)...[/dim]")
         stdout, stderr, code = self._call_gemini_cli_once(sanitized_prompt, timeout_sec, self.primary_model)
         if code == 0:
             return stdout
-        if "RESOURCE_EXHAUSTED" in stderr or "quota" in stderr.lower() or "rate limit" in stderr.lower():
+        if "TerminalQuotaError" in stderr or "quota" in stderr.lower() or "rate limit" in stderr.lower():
             for fallback in self.fallback_models:
                 console.print(f"[yellow][Gemini CLI] Quota/limit reached. Retrying with {fallback}...[/yellow]")
                 stdout, stderr, code = self._call_gemini_cli_once(sanitized_prompt, timeout_sec, fallback)
