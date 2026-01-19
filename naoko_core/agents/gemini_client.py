@@ -1,6 +1,7 @@
 import os
 import subprocess
 import shlex
+import re
 from pathlib import Path
 from rich.console import Console
 from ..io.doc_parser import DocParser
@@ -14,7 +15,7 @@ class GeminiClient:
         self.artifacts_dir = self.root_dir / "artifacts"
         self.dry_run = dry_run
         self.primary_model = "gemini-3"
-        self.fallback_model = "gemini-2.5"
+        self.fallback_models = ["gemini-2.5-pro", "gemini-2.5-flash"]
         
         if not self.dry_run:
             try:
@@ -48,15 +49,19 @@ class GeminiClient:
         """
         if self.dry_run: return ""
 
-        console.print(f"[dim][Gemini CLI] Executing command via STDIN (Length: {len(prompt)} chars)...[/dim]")
-        stdout, stderr, code = self._call_gemini_cli_once(prompt, timeout_sec, self.primary_model)
+        sanitized_prompt = re.sub(r"(?m)^@", r"\\@", prompt)
+        console.print(f"[dim][Gemini CLI] Executing command via STDIN (Length: {len(sanitized_prompt)} chars)...[/dim]")
+        stdout, stderr, code = self._call_gemini_cli_once(sanitized_prompt, timeout_sec, self.primary_model)
         if code == 0:
             return stdout
         if "RESOURCE_EXHAUSTED" in stderr or "quota" in stderr.lower() or "rate limit" in stderr.lower():
-            console.print(f"[yellow][Gemini CLI] Quota/limit reached. Retrying with {self.fallback_model}...[/yellow]")
-            stdout, stderr, code = self._call_gemini_cli_once(prompt, timeout_sec, self.fallback_model)
-            if code == 0:
-                return stdout
+            for fallback in self.fallback_models:
+                console.print(f"[yellow][Gemini CLI] Quota/limit reached. Retrying with {fallback}...[/yellow]")
+                stdout, stderr, code = self._call_gemini_cli_once(sanitized_prompt, timeout_sec, fallback)
+                if code == 0:
+                    return stdout
+                if "ModelNotFound" not in stderr:
+                    break
         if stderr == "timeout":
             console.print(f"[red][Gemini CLI] Timeout expired.[/red]")
             return ""
