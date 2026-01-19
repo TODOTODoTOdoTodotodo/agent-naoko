@@ -154,10 +154,22 @@ class GeminiClient:
             current_code = "(File not found)"
 
         prompt = (
-            f"Review this code against requirements.\n\n"
+            "Review the code against the requirements and respond in this exact format.\n\n"
+            "Format:\n"
+            "Summary:\n"
+            "- <one paragraph>\n\n"
+            "Findings:\n"
+            "- [High] <issue> (Location: <file or snippet>)\n"
+            "- [Medium] <issue> (Location: <file or snippet>)\n"
+            "- [Low] <issue> (Location: <file or snippet>)\n"
+            "- If no findings, write: Findings: None\n\n"
+            "Additional Considerations:\n"
+            "- <extra checks, risks, or test suggestions>\n"
+            "- If none, write: Additional Considerations: None\n\n"
+            "User Questions (only if user confirmation is required):\n"
+            "- Q: <question> | Example: <short suggested answer> | Required: yes/no\n\n"
             f"Requirements:\n{req_content}\n\n"
-            f"Current Code Implementation:\n{current_code}\n\n"
-            f"Identify critical bugs or missing features with 'Issue:' prefix. If fine, say 'No critical issues found'."
+            f"Current Code Implementation:\n{current_code}\n"
         )
         
         result = self._call_gemini_cli(prompt)

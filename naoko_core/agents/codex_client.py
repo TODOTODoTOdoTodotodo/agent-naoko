@@ -20,7 +20,7 @@ class CodexClient:
         
         self.token = AuthManager.get_codex_token()
         self.api_url = os.getenv("CODEX_API_URL", "https://api.openai.com/v1/chat/completions") 
-        self.model = "gpt-5.2_codex-medium"
+        self.model = "gpt-5.2-codex"
 
         if not self.dry_run:
             os.makedirs(self.artifacts_dir, exist_ok=True)
@@ -50,7 +50,7 @@ class CodexClient:
         return ""
 
     def _call_codex_cli(self, prompt: str) -> str:
-        command = ["codex", "prompt", "--model", self.model]
+        command = ["codex", "exec", "-m", self.model, "-c", "reasoning.effort=\"medium\"", "-"]
         try:
             console.print(f"[magenta][Codex CLI] Executing command via STDIN...[/magenta]")
             result = subprocess.run(
@@ -63,6 +63,8 @@ class CodexClient:
             )
             if result.returncode == 0:
                 return self._clean_code(result.stdout)
+            if result.stderr.strip():
+                console.print(f"[red][Codex CLI] Error: {result.stderr.strip()}[/red]")
             return ""
         except Exception as e:
             console.print(f"[red][Codex CLI] Execution failed: {e}[/red]")
@@ -165,7 +167,7 @@ class CodexClient:
         if not os.path.exists(review_path): return str(output_path), "FAILED"
         review_content = Path(review_path).read_text()
 
-        status = "CHANGES_NEEDED" if any(k in review_content for k in ["Issue", "Bug", "Missing"]) else "SUITABLE"
+        status = "CHANGES_NEEDED" if any(k in review_content for k in ["Issue", "Bug", "Missing", "[High]", "[Medium]"]) else "SUITABLE"
         
         if status == "CHANGES_NEEDED" and hasattr(self, 'last_target_path'):
             console.print(f"[magenta]Codex Agent:[/magenta] Fixing issues in {self.last_target_path}...")

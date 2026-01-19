@@ -1,6 +1,6 @@
 from rich.console import Console
 from rich.panel import Panel
-from rich.prompt import Confirm
+from rich.prompt import Confirm, Prompt
 from pathlib import Path
 import os
 from .agents.gemini_client import GeminiClient
@@ -57,6 +57,42 @@ class Orchestrator:
             self.console.print(f"\n[bold underline]Round {i}/{self.max_rounds}[/bold underline]")
             
             review_path = self.gemini.review(patch_path, req_path, round_num=i)
+            if review_path and os.path.exists(review_path):
+                review_content = Path(review_path).read_text(encoding="utf-8")
+                questions = []
+                in_questions = False
+                for line in review_content.splitlines():
+                    stripped = line.strip()
+                    if stripped.lower().startswith("user questions"):
+                        in_questions = True
+                        continue
+                    if in_questions and stripped.startswith("##"):
+                        break
+                    if in_questions and stripped.startswith("-"):
+                        questions.append(stripped)
+
+                if questions:
+                    answers = []
+                    for qline in questions:
+                        qtext = qline.lstrip("-").strip()
+                        example = ""
+                        if "Example:" in qtext:
+                            parts = qtext.split("Example:", 1)
+                            qtext = parts[0].replace("Q:", "").strip(" |")
+                            example = parts[1].split("|", 1)[0].strip()
+                        else:
+                            qtext = qtext.replace("Q:", "").strip()
+
+                        prompt_text = f"{qtext}\nPress Enter to use the example."
+                        answer = Prompt.ask(prompt_text, default=example)
+                        answers.append((qtext, answer))
+
+                    if answers:
+                        review_content += "\n\nUser Answers:\n"
+                        for qtext, answer in answers:
+                            review_content += f"- {qtext}: {answer}\n"
+                        Path(review_path).write_text(review_content, encoding="utf-8")
+
             judgement_path, status = self.codex.refine(review_path)
             
             if status == "SUITABLE":

@@ -38,6 +38,19 @@ class AuthManager:
                         return token
         except Exception:
             pass
+        console.print(Panel.fit(
+            "[bold cyan]Codex Authentication[/bold cyan]\n\n"
+            "No Codex API token found. Enter it now, or store it at:\n"
+            "~/.codex/auth.json with a key like 'OPENAI_API_KEY' or 'api_key'.",
+            border_style="cyan"
+        ))
+        new_key = Prompt.ask("Enter Codex API Key (leave blank to skip)", password=True, default="")
+        if new_key:
+            auth_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(auth_path, "w") as f:
+                json.dump({"OPENAI_API_KEY": new_key.strip()}, f)
+            console.print("[green][Auth] Codex API key saved to ~/.codex/auth.json.[/green]")
+            return new_key.strip()
         return ""
 
     @staticmethod
