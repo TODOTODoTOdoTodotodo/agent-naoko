@@ -53,12 +53,12 @@ class CodexClient:
         thread.start()
         return stop_event, start
 
-    def _call_gemini_fallback(self, prompt: str) -> str:
+    def _call_gemini_fallback(self, prompt: str, timeout_sec: int = 1200) -> str:
         console.print("[yellow][Codex] Switching to Gemini CLI (Fallback)...[/yellow]")
         stop_event, start = self._start_wait_timer("Gemini CLI waiting")
         try:
             command = ["gemini", "--output-format", "text"]
-            result = subprocess.run(command, input=prompt, capture_output=True, text=True, encoding='utf-8', timeout=1200)
+            result = subprocess.run(command, input=prompt, capture_output=True, text=True, encoding='utf-8', timeout=timeout_sec)
             elapsed = int(time.time() - start)
             if result.returncode == 0:
                 console.print(f"[dim][Gemini CLI] Done in {elapsed}s[/dim]")
@@ -83,7 +83,7 @@ class CodexClient:
             stop_event.set()
         return ""
 
-    def _call_codex_cli(self, prompt: str) -> str:
+    def _call_codex_cli(self, prompt: str, timeout_sec: int = 1200) -> str:
         command = ["codex", "exec", "-m", self.model, "-c", "reasoning.effort=\"medium\"", "-"]
         stop_event, start = self._start_wait_timer("Codex CLI waiting")
         try:
@@ -94,7 +94,7 @@ class CodexClient:
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
-                timeout=1200,
+                timeout=timeout_sec,
             )
             elapsed = int(time.time() - start)
             if result.returncode == 0:
@@ -124,10 +124,16 @@ class CodexClient:
         finally:
             stop_event.set()
 
-    def _generate_code(self, prompt: str) -> str:
+    def _generate_code(
+        self,
+        prompt: str,
+        codex_timeout_sec: int = 1200,
+        api_timeout_sec: int = 1200,
+        gemini_timeout_sec: int = 1200,
+    ) -> str:
         if self.dry_run: return ""
         if self.has_codex_cli:
-            code = self._call_codex_cli(prompt)
+            code = self._call_codex_cli(prompt, timeout_sec=codex_timeout_sec)
             if code: return code
 
         failures = 0
@@ -145,7 +151,7 @@ class CodexClient:
                     "messages": [{"role": "system", "content": system_prompt}, {"role": "user", "content": prompt}],
                     "temperature": 0.2
                 }
-                response = requests.post(self.api_url, json=payload, headers=headers, timeout=1200)
+                response = requests.post(self.api_url, json=payload, headers=headers, timeout=api_timeout_sec)
                 elapsed = int(time.time() - start)
                 if response.status_code == 200:
                     console.print(f"[dim][Codex API] Done in {elapsed}s[/dim]")
@@ -173,7 +179,7 @@ class CodexClient:
             finally:
                 stop_event.set()
 
-        return self._call_gemini_fallback(f"{system_prompt}\n\n{prompt}")
+        return self._call_gemini_fallback(f"{system_prompt}\n\n{prompt}", timeout_sec=gemini_timeout_sec)
 
     def implement(self, req_path: str, style_guide_path: str = None, target_file: str = None) -> tuple[str, bool]:
         """
@@ -217,7 +223,12 @@ class CodexClient:
             f"Task: Update the file to implement requirements. Return COMPLETE code."
         )
 
-        new_content = self._generate_code(prompt)
+        new_content = self._generate_code(
+            prompt,
+            codex_timeout_sec=3600,
+            api_timeout_sec=3600,
+            gemini_timeout_sec=1200,
+        )
         if not new_content: return str(output_path), False
 
         # 5. Generate Diff and Overwrite
