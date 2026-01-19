@@ -32,13 +32,23 @@ class CodexClient:
             except (subprocess.CalledProcessError, FileNotFoundError):
                 self.has_codex_cli = False
 
-    def _clean_code(self, text: str) -> str:
+    def _clean_code(self, text: str, expected_class: str | None = None) -> str:
         if not text: return ""
         pattern = r"```(?:\w+)?\n(.*?)```"
-        match = re.search(pattern, text, re.DOTALL)
+        matches = re.findall(pattern, text, re.DOTALL)
+        if matches:
+            cleaned = max(matches, key=len).strip()
+            if expected_class and not re.search(rf"\\b(class|interface|enum)\\s+{re.escape(expected_class)}\\b", cleaned):
+                return ""
+            return cleaned
+        java_start_pattern = r"(package\\s+[\\w\\.]+;|import\\s+[\\w\\.]+;|public\\s+(?:class|interface|enum)\\s+\\w+)"
+        match = re.search(java_start_pattern, text)
         if match:
-            return match.group(1).strip()
-        return text.strip()
+            cleaned = text[match.start():].strip()
+            if expected_class and not re.search(rf"\\b(class|interface|enum)\\s+{re.escape(expected_class)}\\b", cleaned):
+                return ""
+            return cleaned
+        return "" if expected_class else text.strip()
 
     def _start_wait_timer(self, label: str) -> tuple[threading.Event, float]:
         start = time.time()
@@ -53,7 +63,12 @@ class CodexClient:
         thread.start()
         return stop_event, start
 
-    def _call_gemini_fallback(self, prompt: str, timeout_sec: int = 1200) -> str:
+    def _call_gemini_fallback(
+        self,
+        prompt: str,
+        timeout_sec: int = 1200,
+        expected_class: str | None = None,
+    ) -> str:
         console.print("[yellow][Codex] Switching to Gemini CLI (Fallback)...[/yellow]")
         stop_event, start = self._start_wait_timer("Gemini CLI waiting")
         try:
@@ -62,7 +77,7 @@ class CodexClient:
             elapsed = int(time.time() - start)
             if result.returncode == 0:
                 console.print(f"[dim][Gemini CLI] Done in {elapsed}s[/dim]")
-                return self._clean_code(result.stdout)
+                return self._clean_code(result.stdout, expected_class=expected_class)
             console.print(f"[dim][Gemini CLI] Finished in {elapsed}s (non-zero exit)[/dim]")
         except subprocess.TimeoutExpired:
             elapsed = int(time.time() - start)
@@ -74,7 +89,7 @@ class CodexClient:
                 choices=["yes", "no"],
             )
             if choice == "yes":
-                return self._call_gemini_fallback(prompt)
+                return self._call_gemini_fallback(prompt, timeout_sec=timeout_sec, expected_class=expected_class)
         except Exception as e:
             elapsed = int(time.time() - start)
             console.print(f"[dim][Gemini CLI] Failed after {elapsed}s[/dim]")
@@ -83,7 +98,12 @@ class CodexClient:
             stop_event.set()
         return ""
 
-    def _call_codex_cli(self, prompt: str, timeout_sec: int = 1200) -> str:
+    def _call_codex_cli(
+        self,
+        prompt: str,
+        timeout_sec: int = 1200,
+        expected_class: str | None = None,
+    ) -> str:
         command = ["codex", "exec", "-m", self.model, "-c", "reasoning.effort=\"medium\"", "-"]
         stop_event, start = self._start_wait_timer("Codex CLI waiting")
         try:
@@ -99,7 +119,7 @@ class CodexClient:
             elapsed = int(time.time() - start)
             if result.returncode == 0:
                 console.print(f"[dim][Codex CLI] Done in {elapsed}s[/dim]")
-                return self._clean_code(result.stdout)
+                return self._clean_code(result.stdout, expected_class=expected_class)
             if result.stderr.strip():
                 console.print(f"[red][Codex CLI] Error: {result.stderr.strip()}[/red]")
             console.print(f"[dim][Codex CLI] Finished in {elapsed}s (non-zero exit)[/dim]")
@@ -114,7 +134,7 @@ class CodexClient:
                 choices=["yes", "no"],
             )
             if choice == "yes":
-                return self._call_codex_cli(prompt)
+                return self._call_codex_cli(prompt, timeout_sec=timeout_sec, expected_class=expected_class)
             return ""
         except Exception as e:
             elapsed = int(time.time() - start)
@@ -130,10 +150,11 @@ class CodexClient:
         codex_timeout_sec: int = 1200,
         api_timeout_sec: int = 1200,
         gemini_timeout_sec: int = 1200,
+        expected_class: str | None = None,
     ) -> str:
         if self.dry_run: return ""
         if self.has_codex_cli:
-            code = self._call_codex_cli(prompt, timeout_sec=codex_timeout_sec)
+            code = self._call_codex_cli(prompt, timeout_sec=codex_timeout_sec, expected_class=expected_class)
             if code: return code
 
         failures = 0
@@ -155,7 +176,7 @@ class CodexClient:
                 elapsed = int(time.time() - start)
                 if response.status_code == 200:
                     console.print(f"[dim][Codex API] Done in {elapsed}s[/dim]")
-                    return self._clean_code(response.json()["choices"][0]["message"]["content"])
+                    return self._clean_code(response.json()["choices"][0]["message"]["content"], expected_class=expected_class)
                 console.print(f"[dim][Codex API] Finished in {elapsed}s (status {response.status_code})[/dim]")
                 failures += 1
             except requests.Timeout:
@@ -179,7 +200,11 @@ class CodexClient:
             finally:
                 stop_event.set()
 
-        return self._call_gemini_fallback(f"{system_prompt}\n\n{prompt}", timeout_sec=gemini_timeout_sec)
+        return self._call_gemini_fallback(
+            f"{system_prompt}\n\n{prompt}",
+            timeout_sec=gemini_timeout_sec,
+            expected_class=expected_class,
+        )
 
     def implement(self, req_path: str, style_guide_path: str = None, target_file: str = None) -> tuple[str, bool]:
         """
@@ -216,11 +241,16 @@ class CodexClient:
             style_instruction = f"STYLE GUIDELINES:\n{Path(style_guide_path).read_text()}\n\n"
         
         # 4. Generate Code
+        expected_class = target_path.stem
         prompt = (
             f"{style_instruction}"
             f"Requirements:\n{req_content}\n\n"
-            f"Current File ({target_path.name}):\n{old_content}\n\n"
-            f"Task: Update the file to implement requirements. Return COMPLETE code."
+            f"Current File Content ({target_path.name}):\n```java\n{old_content}\n```\n\n"
+            f"Task: Implement the requirements into this file.\n"
+            f"Constraints:\n"
+            f"- Output ONLY the complete Java file content for {target_path.name}.\n"
+            f"- Do NOT remove any existing code unless specified.\n"
+            f"- Do NOT return a diff, markdown fences, or review/analysis text."
         )
 
         new_content = self._generate_code(
@@ -228,6 +258,7 @@ class CodexClient:
             codex_timeout_sec=3600,
             api_timeout_sec=3600,
             gemini_timeout_sec=1200,
+            expected_class=expected_class,
         )
         if not new_content: return str(output_path), False
 
@@ -258,8 +289,17 @@ class CodexClient:
         if status == "CHANGES_NEEDED" and hasattr(self, 'last_target_path'):
             console.print(f"[magenta]Codex Agent:[/magenta] Fixing issues in {self.last_target_path}...")
             old_content = self.last_target_path.read_text()
-            prompt = f"Fix issues in this code based on review.\nReview: {review_content}\nCode:\n{old_content}"
-            new_content = self._generate_code(prompt)
+            expected_class = self.last_target_path.stem
+            prompt = (
+                f"Review Feedback:\n{review_content}\n\n"
+                f"Current Code:\n```java\n{old_content}\n```\n\n"
+                f"Task: Fix the code based on the review.\n"
+                f"Constraints:\n"
+                f"- Output ONLY the complete Java file content for {self.last_target_path.name}.\n"
+                f"- Preserve unrelated logic.\n"
+                f"- Do NOT return analysis, review text, or markdown fences."
+            )
+            new_content = self._generate_code(prompt, expected_class=expected_class)
             
             if new_content and new_content.strip() != old_content.strip():
                 self.last_target_path.write_text(new_content, encoding="utf-8")
