@@ -71,6 +71,31 @@ naoko start ./docs/feature_req.pdf --entry-point src/main/java/com/example/UserC
 - `--dry-run`: 실제 파일 수정이나 Git 반영 없이 흐름만 확인.
 - `--entry-point [PATH]`: 스타일 분석 기준이 될 소스 파일 경로.
 
+## 🧩 Codex Skill 등록
+
+이 저장소에는 Codex CLI에서 사용할 수 있는 `naoko` 스킬이 포함되어 있습니다.
+
+### 등록 방법 (로컬)
+
+1. 스킬 디렉터리 복사:
+   ```bash
+   mkdir -p ~/.codex/skills
+   cp -r ./skills/naoko ~/.codex/skills/
+   ```
+
+2. 등록 확인:
+   ```bash
+   ls ~/.codex/skills
+   ```
+
+### 사용 예시
+
+- 암시적 호출:
+  - "기획서가 준비되었으니 오토 돌려줘"
+  - "기획서 기반으로 바로 개발 진행해줘"
+- 직접 호출:
+  - "naoko 실행해줘"
+
 ## 📂 프로젝트 구조
 
 ```text
