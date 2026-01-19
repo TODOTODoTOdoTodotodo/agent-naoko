@@ -50,10 +50,17 @@ class CodexClient:
         return ""
 
     def _call_codex_cli(self, prompt: str) -> str:
-        command = ["codex", "prompt", prompt, "--model", self.model]
+        command = ["codex", "prompt", "--model", self.model]
         try:
-            console.print(f"[magenta][Codex CLI] Executing command...[/magenta]")
-            result = subprocess.run(command, capture_output=True, text=True, encoding='utf-8', timeout=120)
+            console.print(f"[magenta][Codex CLI] Executing command via STDIN...[/magenta]")
+            result = subprocess.run(
+                command,
+                input=prompt,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                timeout=120,
+            )
             if result.returncode == 0:
                 return self._clean_code(result.stdout)
             return ""
