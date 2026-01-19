@@ -15,17 +15,13 @@ class DocParser:
         
         if ext == '.pptx':
             return DocParser._parse_pptx(file_path)
-        elif ext == '.pdf':
-            # Placeholder for PDF
-            return f"[Parser] PDF parsing not yet implemented for {file_path}"
-        elif ext in ['.xlsx', '.xls']:
-            # Placeholder for Excel
-            return f"[Parser] Excel parsing not yet implemented for {file_path}"
+        elif ext in ['.pdf', '.xlsx', '.xls']:
+            return ""
         elif ext == '.md':
             with open(file_path, 'r', encoding='utf-8') as f:
                 return f.read()
         else:
-            return f"[Parser] Unsupported file format: {ext}"
+            return ""
 
     @staticmethod
     def _parse_pptx(file_path: str) -> str:
