@@ -6,6 +6,7 @@ import subprocess
 import re
 from pathlib import Path
 from rich.console import Console
+from rich.prompt import Prompt
 from ..io.git_ops import GitOps
 from ..auth import AuthManager
 
@@ -42,9 +43,18 @@ class CodexClient:
         console.print("[yellow][Codex] Switching to Gemini CLI (Fallback)...[/yellow]")
         try:
             command = ["gemini", "--output-format", "text"]
-            result = subprocess.run(command, input=prompt, capture_output=True, text=True, encoding='utf-8', timeout=600)
+            result = subprocess.run(command, input=prompt, capture_output=True, text=True, encoding='utf-8', timeout=1200)
             if result.returncode == 0:
                 return self._clean_code(result.stdout)
+        except subprocess.TimeoutExpired:
+            console.print("[yellow][Codex-Fallback] Gemini timed out after 20 minutes.[/yellow]")
+            choice = Prompt.ask(
+                "Continue waiting and retry? (Enter to use example)",
+                default="yes",
+                choices=["yes", "no"],
+            )
+            if choice == "yes":
+                return self._call_gemini_fallback(prompt)
         except Exception as e:
             console.print(f"[red][Codex-Fallback] Error: {e}[/red]")
         return ""
@@ -59,12 +69,22 @@ class CodexClient:
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
-                timeout=600,
+                timeout=1200,
             )
             if result.returncode == 0:
                 return self._clean_code(result.stdout)
             if result.stderr.strip():
                 console.print(f"[red][Codex CLI] Error: {result.stderr.strip()}[/red]")
+            return ""
+        except subprocess.TimeoutExpired:
+            console.print("[yellow][Codex CLI] Timed out after 20 minutes.[/yellow]")
+            choice = Prompt.ask(
+                "Continue waiting and retry? (Enter to use example)",
+                default="yes",
+                choices=["yes", "no"],
+            )
+            if choice == "yes":
+                return self._call_codex_cli(prompt)
             return ""
         except Exception as e:
             console.print(f"[red][Codex CLI] Execution failed: {e}[/red]")
@@ -90,11 +110,22 @@ class CodexClient:
                     "messages": [{"role": "system", "content": system_prompt}, {"role": "user", "content": prompt}],
                     "temperature": 0.2
                 }
-                response = requests.post(self.api_url, json=payload, headers=headers, timeout=300)
+                response = requests.post(self.api_url, json=payload, headers=headers, timeout=1200)
                 if response.status_code == 200:
                     return self._clean_code(response.json()["choices"][0]["message"]["content"])
                 failures += 1
-            except Exception:
+            except requests.Timeout:
+                console.print("[yellow][Codex] API request timed out after 20 minutes.[/yellow]")
+                choice = Prompt.ask(
+                    "Continue waiting and retry? (Enter to use example)",
+                    default="yes",
+                    choices=["yes", "no"],
+                )
+                if choice != "yes":
+                    failures += 1
+                time.sleep(1)
+            except Exception as e:
+                console.print(f"[yellow][Codex] Connection Error: {e}[/yellow]")
                 failures += 1
                 time.sleep(1)
 
