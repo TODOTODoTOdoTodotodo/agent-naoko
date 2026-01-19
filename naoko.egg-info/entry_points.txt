@@ -1,2 +1,0 @@
-[console_scripts]
-naoko = naoko_core.main:app

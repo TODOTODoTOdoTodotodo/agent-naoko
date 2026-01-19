@@ -8,6 +8,12 @@ __pycache__/
 artifacts/*
 !artifacts/.gitkeep
 
+# Build Artifacts
+build/
+dist/
+*.egg-info/
+!artifacts/.gitkeep
+
 # Documents
 docs/*.pptx
 docs/*.xlsx
