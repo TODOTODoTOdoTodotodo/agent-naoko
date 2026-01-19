@@ -19,6 +19,8 @@ class CodexClient:
         self.artifacts_dir = self.root_dir / "artifacts"
         self.dry_run = dry_run
         self.has_codex_cli = False
+        self.last_error = ""
+        self.error_log_path = self.artifacts_dir / "codex_error.log"
         
         self.token = AuthManager.get_codex_token()
         self.api_url = os.getenv("CODEX_API_URL", "https://api.openai.com/v1/chat/completions") 
@@ -43,6 +45,7 @@ class CodexClient:
             # Return the longest block, assuming it's the main code
             cleaned = max(matches, key=len).strip()
             if expected_class and not re.search(rf"\\b(class|interface|enum)\\s+{re.escape(expected_class)}\\b", cleaned):
+                self.last_error = f"Expected class '{expected_class}' not found in code block."
                 return ""
             return cleaned
             
@@ -57,10 +60,25 @@ class CodexClient:
         if match:
             cleaned = stripped[match.start():].strip()
             if expected_class and not re.search(rf"\\b(class|interface|enum)\\s+{re.escape(expected_class)}\\b", cleaned):
+                self.last_error = f"Expected class '{expected_class}' not found in output."
                 return ""
             return cleaned
             
-        return "" if expected_class else text.strip()
+        if expected_class:
+            self.last_error = f"Expected class '{expected_class}' not found in output."
+            return ""
+        return text.strip()
+
+    def _log_error(self, message: str) -> None:
+        if not message:
+            return
+        self.last_error = message
+        try:
+            self.error_log_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(self.error_log_path, "a", encoding="utf-8") as f:
+                f.write(f"{message}\n")
+        except Exception:
+            pass
 
     def _start_wait_timer(self, label: str) -> tuple[threading.Event, float]:
         start = time.time()
@@ -89,7 +107,11 @@ class CodexClient:
             elapsed = int(time.time() - start)
             if result.returncode == 0:
                 console.print(f"[dim][Gemini CLI] Done in {elapsed}s[/dim]")
-                return self._clean_code(result.stdout, expected_class=expected_class)
+                cleaned = self._clean_code(result.stdout, expected_class=expected_class)
+                if not cleaned and expected_class:
+                    self._log_error(self.last_error or f"Gemini output missing expected class: {expected_class}")
+                    console.print(f"[red][Codex-Fallback] {self.last_error}[/red]")
+                return cleaned
             console.print(f"[dim][Gemini CLI] Finished in {elapsed}s (non-zero exit)[/dim]")
         except subprocess.TimeoutExpired:
             elapsed = int(time.time() - start)
@@ -124,8 +146,13 @@ class CodexClient:
             elapsed = int(time.time() - start)
             if result.returncode == 0:
                 console.print(f"[dim][Codex CLI] Done in {elapsed}s[/dim]")
-                return self._clean_code(result.stdout, expected_class=expected_class)
+                cleaned = self._clean_code(result.stdout, expected_class=expected_class)
+                if not cleaned and expected_class:
+                    self._log_error(self.last_error or f"Codex CLI output missing expected class: {expected_class}")
+                    console.print(f"[red][Codex CLI] {self.last_error}[/red]")
+                return cleaned
             console.print(f"[red][Codex CLI] Error: {result.stderr.strip()}[/red]")
+            self._log_error(result.stderr.strip())
             return ""
         except subprocess.TimeoutExpired:
             elapsed = int(time.time() - start)
@@ -185,10 +212,16 @@ class CodexClient:
                 elapsed = int(time.time() - start)
                 if response.status_code == 200:
                     console.print(f"[dim][Codex API] Done in {elapsed}s[/dim]")
-                    return self._clean_code(response.json()["choices"][0]["message"]["content"], expected_class=expected_class)
+                    cleaned = self._clean_code(response.json()["choices"][0]["message"]["content"], expected_class=expected_class)
+                    if not cleaned and expected_class:
+                        self._log_error(self.last_error or f"Codex API output missing expected class: {expected_class}")
+                        console.print(f"[red][Codex] {self.last_error}[/red]")
+                    return cleaned
                 console.print(f"[dim][Codex API] Finished in {elapsed}s (status {response.status_code})[/dim]")
+                self._log_error(f"Codex API status {response.status_code}")
                 failures += 1
             except Exception as e:
+                self._log_error(f"Codex API error: {e}")
                 console.print(f"[yellow][Codex] Connection Error: {e}[/yellow]")
                 failures += 1
                 time.sleep(1)
@@ -248,15 +281,36 @@ class CodexClient:
             gemini_timeout_sec=1200,
             expected_class=expected_class,
         )
-        if not new_content: return str(output_path), False
+        if not new_content:
+            if expected_class:
+                relaxed = self._generate_code(
+                    prompt,
+                    codex_timeout_sec=3600,
+                    api_timeout_sec=3600,
+                    gemini_timeout_sec=1200,
+                    expected_class=None,
+                )
+                if relaxed and ("package " in relaxed or "import " in relaxed):
+                    console.print("[yellow][Codex] Retrying without class-name guard. Please verify output.[/yellow]")
+                    new_content = relaxed
+                else:
+                    self._log_error(self.last_error or "No valid code generated.")
+                    console.print(f"[red][Codex] Generation failed. See {self.error_log_path}[/red]")
+                    return str(output_path), False
+            else:
+                if self.last_error:
+                    console.print(f"[red][Codex] Generation failed: {self.last_error}[/red]")
+                return str(output_path), False
 
         # Safety Check: If new content is suspiciously short or doesn't look like Java
         if len(new_content) < len(old_content) * 0.5:
+            self._log_error("Generated code is significantly shorter than original.")
             console.print("[red][Codex] Warning: Generated code is significantly shorter than original. Aborting overwrite to protect file.[/red]")
             console.print(f"[dim]Generated: {new_content[:200]}...[/dim]")
             return str(output_path), False
 
         if "package " not in new_content and "import " not in new_content:
+             self._log_error("Generated code missing package/import.")
              console.print("[red][Codex] Warning: Generated code does not look like a valid Java file (missing package/import). Aborting.[/red]")
              return str(output_path), False
 
