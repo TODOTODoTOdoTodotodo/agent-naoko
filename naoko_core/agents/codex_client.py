@@ -42,7 +42,7 @@ class CodexClient:
         console.print("[yellow][Codex] Switching to Gemini CLI (Fallback)...[/yellow]")
         try:
             command = ["gemini", "--output-format", "text"]
-            result = subprocess.run(command, input=prompt, capture_output=True, text=True, encoding='utf-8', timeout=120)
+            result = subprocess.run(command, input=prompt, capture_output=True, text=True, encoding='utf-8', timeout=600)
             if result.returncode == 0:
                 return self._clean_code(result.stdout)
         except Exception as e:
@@ -59,7 +59,7 @@ class CodexClient:
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
-                timeout=120,
+                timeout=600,
             )
             if result.returncode == 0:
                 return self._clean_code(result.stdout)
@@ -90,7 +90,7 @@ class CodexClient:
                     "messages": [{"role": "system", "content": system_prompt}, {"role": "user", "content": prompt}],
                     "temperature": 0.2
                 }
-                response = requests.post(self.api_url, json=payload, headers=headers, timeout=60)
+                response = requests.post(self.api_url, json=payload, headers=headers, timeout=300)
                 if response.status_code == 200:
                     return self._clean_code(response.json()["choices"][0]["message"]["content"])
                 failures += 1
