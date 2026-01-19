@@ -4,3 +4,6 @@ pandas
 openpyxl
 pypdf
 python-pptx
+google-generativeai
+google-auth-oauthlib
+google-auth-httplib2

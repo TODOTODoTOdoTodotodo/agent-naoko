@@ -1,10 +1,10 @@
-from rich.console import Console
-import time
 import os
-from pathlib import Path
+import time
 import difflib
-from ..io.git_ops import GitOps
-from ..auth import AuthManager
+import subprocess
+import re
+from pathlib import Path
+from rich.console import Console
 
 console = Console()
 
@@ -14,137 +14,177 @@ class CodexClient:
         self.artifacts_dir = self.root_dir / "artifacts"
         self.dry_run = dry_run
         
-        # Load Auth Token
-        self.token = AuthManager.get_codex_token()
-        
+        # Verify CLI tools availability
         if not self.dry_run:
             os.makedirs(self.artifacts_dir, exist_ok=True)
+            # Check for codex CLI availability
+            try:
+                subprocess.run(["codex", "--version"], capture_output=True, check=True)
+                self.has_codex_cli = True
+            except (subprocess.CalledProcessError, FileNotFoundError):
+                console.print("[yellow][Codex] 'codex' CLI not found. Will default to Gemini Fallback.[/yellow]")
+                self.has_codex_cli = False
+
+    def _clean_code(self, text: str) -> str:
+        """Removes markdown code fences if present."""
+        if not text: return ""
+        pattern = r"```(?:\w+)?\n(.*?)```"
+        match = re.search(pattern, text, re.DOTALL)
+        if match:
+            return match.group(1).strip()
+        return text.strip()
+
+    def _call_gemini_fallback(self, prompt: str) -> str:
+        """Fallback to Gemini CLI."""
+        console.print("[yellow][Codex] Switching to Gemini CLI (Fallback)...[/yellow]")
+        try:
+            command = ["gemini", prompt, "--output-format", "text"]
+            result = subprocess.run(
+                command, 
+                capture_output=True, 
+                text=True, 
+                encoding='utf-8', 
+                timeout=120
+            )
+            if result.returncode == 0:
+                return self._clean_code(result.stdout)
+            else:
+                console.print(f"[red][Codex-Fallback] Gemini failed: {result.stderr.strip()}[/red]")
+        except Exception as e:
+            console.print(f"[red][Codex-Fallback] Error: {e}[/red]")
+        return ""
+
+    def _call_codex_cli(self, prompt: str) -> str:
+        """Executes the external 'codex' CLI command."""
+        # Adjust command format based on actual CLI spec
+        # Assuming: codex prompt "..." --model ...
+        command = ["codex", "prompt", prompt, "--model", "gpt-5.2_codex-medium"]
+        
+        try:
+            console.print(f"[magenta][Codex CLI] Executing command...[/magenta]")
+            result = subprocess.run(
+                command, 
+                capture_output=True, 
+                text=True, 
+                encoding='utf-8', 
+                timeout=120
+            )
+            
+            if result.returncode != 0:
+                console.print(f"[red][Codex CLI] Error: {result.stderr.strip()}[/red]")
+                return ""
+            
+            return self._clean_code(result.stdout)
+        except Exception as e:
+            console.print(f"[red][Codex CLI] Execution failed: {e}[/red]")
+            return ""
+
+    def _generate_code(self, prompt: str) -> str:
+        """
+        Tries Codex CLI, then falls back to Gemini CLI.
+        """
+        if self.dry_run: return ""
+
+        if self.has_codex_cli:
+            code = self._call_codex_cli(prompt)
+            if code: return code
+            console.print("[red][Codex] CLI execution failed. Trying fallback.[/red]")
+        
+        return self._call_gemini_fallback(prompt)
 
     def implement(self, req_path: str) -> tuple[str, bool]:
-        """
-        Implements the code and returns (patch_path, success_flag).
-        """
         console.print(f"[magenta]Codex Agent:[/magenta] Reading requirements from '{req_path}'...")
         
         output_path = self.artifacts_dir / "patch.diff"
         target_path = self.root_dir / "src" / "main" / "java" / "com" / "example" / "User.java"
         
-        if not self.dry_run:
-            time.sleep(1)
-            target_path.parent.mkdir(parents=True, exist_ok=True)
-            if not target_path.exists():
-                target_path.write_text(
-                    "package com.example;\n\npublic class User {\n    private String username;\n}\n",
-                    encoding="utf-8",
-                )
-            old_content = target_path.read_text(encoding="utf-8")
-            new_content = old_content
-            if "private String bio;" not in old_content:
-                new_content = new_content.replace(
-                    "private String username;\n",
-                    "private String username;\n    private String bio;\n",
-                )
+        if self.dry_run: return str(output_path), True
 
-            diff_gen = difflib.unified_diff(
-                old_content.splitlines(keepends=True),
-                new_content.splitlines(keepends=True),
-                fromfile="a/src/main/java/com/example/User.java",
-                tofile="b/src/main/java/com/example/User.java",
-            )
-            diff_content = "".join(diff_gen)
-            
-            if not diff_content:
-                console.print(f"[magenta]Codex Agent:[/magenta] No changes detected (Already implemented).")
-                # Create an empty file to satisfy path existence check, or better, handle it gracefully.
-                # But GitOps.apply_patch fails on empty file.
-                # So we skip apply_patch.
-                with open(output_path, "w") as f:
-                    f.write("") # Clear it
-                return str(output_path), True
+        if not req_path or not os.path.exists(req_path):
+             return str(output_path), False
+             
+        with open(req_path, 'r') as f: req_content = f.read()
+        
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        if not target_path.exists():
+            target_path.write_text("package com.example;\n\npublic class User {\n    private String username;\n}\n", encoding="utf-8")
+        
+        old_content = target_path.read_text(encoding="utf-8")
+        
+        prompt = (
+            f"Requirements:\n{req_content}\n\n"
+            f"Current Code (User.java):\n{old_content}\n\n"
+            f"Task: Implement the requirements. Update the existing code. "
+            f"Return the COMPLETE, valid Java file content."
+        )
 
-            with open(output_path, "w", encoding="utf-8") as f:
-                f.write(diff_content)
+        new_content = self._generate_code(prompt)
+        
+        if not new_content:
+            console.print("[red][Codex] Failed to generate code.[/red]")
+            return str(output_path), False
 
-            applied = GitOps.apply_patch(str(output_path), self.dry_run)
-            return str(output_path), applied
-        else:
-             console.print(f"[magenta]Codex Agent:[/magenta] (Dry-run) Skipping implementation.")
-             return str(output_path), True
+        # Generate Diff for Artifacts (Reference only)
+        diff_gen = difflib.unified_diff(
+            old_content.splitlines(keepends=True),
+            new_content.splitlines(keepends=True),
+            fromfile="a/src/main/java/com/example/User.java",
+            tofile="b/src/main/java/com/example/User.java",
+        )
+        diff_content = "".join(diff_gen)
+        with open(output_path, "w", encoding="utf-8") as f:
+            f.write(diff_content)
+
+        # OVERWRITE STRATEGY
+        console.print(f"[magenta][Codex] Updating file: {target_path}[/magenta]")
+        target_path.write_text(new_content, encoding="utf-8")
+        
+        return str(output_path), True
 
     def refine(self, review_path: str) -> tuple[str, str]:
-        """
-        Analyzes the review and decides the next action.
-        """
-        console.print(f"[magenta]Codex Agent:[/magenta] Analyzing review feedback from '{review_path}'...")
+        console.print(f"[magenta]Codex Agent:[/magenta] Analyzing review feedback...")
         
         output_path = self.artifacts_dir / "review_judgement.md"
         status = "SUITABLE"
         
-        if not self.dry_run:
-            time.sleep(1)
+        if self.dry_run: return str(output_path), status
+
+        with open(review_path, 'r') as f: review_content = f.read()
+
+        if "Issue" in review_content or "Bug" in review_content or "Missing" in review_content:
+            status = "CHANGES_NEEDED"
+        
+        if status == "CHANGES_NEEDED":
+            console.print(f"[magenta]Codex Agent:[/magenta] Applying fixes...")
+            patch_path = self.artifacts_dir / "patch.diff"
+            target_path = self.root_dir / "src" / "main" / "java" / "com" / "example" / "User.java"
             
-            review_content = ""
-            if os.path.exists(review_path):
-                with open(review_path, 'r') as f:
-                    review_content = f.read()
+            old_content = target_path.read_text(encoding="utf-8")
             
-            if "Issue" in review_content:
-                status = "CHANGES_NEEDED"
-            else:
-                status = "SUITABLE"
-
-            if status == "CHANGES_NEEDED":
-                console.print(f"[magenta]Codex Agent:[/magenta] Applying fixes (Regenerating patch)...")
-                patch_path = self.artifacts_dir / "patch.diff"
-                target_path = self.root_dir / "src" / "main" / "java" / "com" / "example" / "User.java"
-
-                # Ensure target exists
-                if not target_path.exists():
-                     # Should not happen in refine, but safety first
-                    target_path.parent.mkdir(parents=True, exist_ok=True)
-                    target_path.write_text("package com.example;\n\npublic class User {\n    private String username;\n}\n", encoding="utf-8")
-
-                old_content = target_path.read_text(encoding="utf-8")
-                new_content = old_content
-                
-                # Apply changes incrementally based on content check
-                if "private String bio;" not in new_content:
-                    new_content = new_content.replace(
-                        "private String username;\n",
-                        "private String username;\n    private String bio;\n",
-                    )
-                if "// Fix: Added validation logic" not in new_content:
-                    new_content = new_content.replace(
-                        "private String bio;\n",
-                        "private String bio;\n    // Fix: Added validation logic\n",
-                    )
-                
-                # Generate diff
+            prompt = (
+                f"Review Feedback:\n{review_content}\n\n"
+                f"Current Code:\n{old_content}\n\n"
+                f"Task: Fix the code based on the review. "
+                f"Return the COMPLETE, valid Java file content."
+            )
+            
+            new_content = self._generate_code(prompt)
+            
+            if new_content and new_content.strip() != old_content.strip():
                 diff_gen = difflib.unified_diff(
                     old_content.splitlines(keepends=True),
                     new_content.splitlines(keepends=True),
                     fromfile="a/src/main/java/com/example/User.java",
                     tofile="b/src/main/java/com/example/User.java",
                 )
-                diff_content = "".join(diff_gen)
+                with open(patch_path, "w", encoding="utf-8") as f:
+                    f.write("".join(diff_gen))
+                
+                target_path.write_text(new_content, encoding="utf-8")
+            else:
+                pass
 
-                if not diff_content:
-                    console.print(f"[magenta]Codex Agent:[/magenta] No new fixes needed (Already applied).")
-                    # If status was CHANGES_NEEDED but no changes, maybe we should switch to SUITABLE?
-                    # Or just return success.
-                    with open(patch_path, "w") as f:
-                         f.write("")
-                    # Do NOT call apply_patch on empty
-                else:
-                    with open(patch_path, "w", encoding="utf-8") as f:
-                        f.write(diff_content)
+        with open(output_path, "w") as f:
+            f.write(f"JUDGEMENT: {status}\nReason: Processed by Agent.")
 
-                    applied = GitOps.apply_patch(str(patch_path), self.dry_run)
-                    if not applied:
-                        status = "FAILED"
-
-            with open(output_path, "w") as f:
-                f.write(f"JUDGEMENT: {status}\nReason: Addressing review.")
-
-        console.print(f"[magenta]Codex Agent:[/magenta] Judgement: {status}")
         return str(output_path), status

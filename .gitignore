@@ -3,6 +3,13 @@ __pycache__/
 .DS_Store
 .venv/
 .env
-.naoko_env
+.naoko_env/*.txt
+.naoko_env/*.json
 artifacts/*
 !artifacts/.gitkeep
+
+# Documents
+docs/*.pptx
+docs/*.xlsx
+docs/*.pdf
+docs/*.docx

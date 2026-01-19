@@ -2,42 +2,136 @@ import json
 import os
 from pathlib import Path
 from rich.console import Console
+from rich.prompt import Prompt
+from rich.panel import Panel
+
+# OAuth imports
+import google.auth
+from google.auth.transport.requests import Request
+from google.oauth2.credentials import Credentials
+from google_auth_oauthlib.flow import InstalledAppFlow
 
 console = Console()
+SCOPES = ['https://www.googleapis.com/auth/cloud-platform']
 
 class AuthManager:
     @staticmethod
     def get_codex_token() -> str:
-        """
-        Retrieves the Codex API token from ~/.codex/auth.json
-        """
+        """Retrieves the Codex API token."""
         auth_path = Path.home() / ".codex" / "auth.json"
-        
-        if not auth_path.exists():
-            console.print(f"[yellow][Auth] Codex auth file not found at {auth_path}[/yellow]")
-            return ""
-            
         try:
-            with open(auth_path, 'r') as f:
-                data = json.load(f)
-                token = data.get("api_key") or data.get("token") or data.get("access_token")
-                
-                if token:
-                    # Mask the token for security
-                    masked = token[:4] + "*" * 4 if len(token) > 8 else "***"
-                    console.print(f"[dim][Auth] Loaded Codex token (Starts with: {masked})[/dim]")
-                    return token
-                else:
-                    console.print(f"[red][Auth] Token not found in {auth_path}[/red]")
-                    return ""
+            if auth_path.exists():
+                with open(auth_path, 'r') as f:
+                    data = json.load(f)
+                    
+                    # Strategy 1: Check top-level keys
+                    token = data.get("api_key") or data.get("OPENAI_API_KEY") or data.get("access_token")
+                    
+                    # Strategy 2: Check nested 'tokens' object (OpenAI Session format)
+                    if not token and "tokens" in data and isinstance(data["tokens"], dict):
+                        token = data["tokens"].get("access_token") or data["tokens"].get("api_key")
+
+                    if token:
+                        masked = token[:4] + "*" * 4 if len(token) > 8 else "***"
+                        console.print(f"[dim][Auth] Loaded Codex token (Starts with: {masked})[/dim]")
+                        return token
+
         except Exception as e:
-            console.print(f"[red][Auth] Failed to read Codex auth file: {e}[/red]")
-            return ""
+            console.print(f"[red][Auth] Error reading auth file: {e}[/red]")
+            pass
+        return ""
 
     @staticmethod
-    def check_gemini_auth():
+    def get_gemini_credentials():
         """
-        Checks if Gemini CLI is authenticated.
+        Returns either an API Key string OR an OAuth Credentials object.
+        Interactive flow asks the user to choose if nothing is found.
         """
-        console.print(f"[dim][Auth] Verifying Gemini authentication context...[/dim]")
-        # Actual check logic would go here
+        root_dir = Path(os.getcwd())
+        env_dir = root_dir / ".naoko_env"
+        if not env_dir.exists():
+            env_dir.mkdir(exist_ok=True)
+
+        token_path = env_dir / "token.json"
+        key_path = env_dir / "gemini_key.txt"
+        creds_path = env_dir / "credentials.json"
+
+        # 1. Try Loading Existing OAuth Token
+        if token_path.exists():
+            try:
+                creds = Credentials.from_authorized_user_file(str(token_path), SCOPES)
+                if creds and creds.expired and creds.refresh_token:
+                    console.print("[dim][Auth] Refreshing OAuth token...[/dim]")
+                    creds.refresh(Request())
+                console.print("[green][Auth] Using existing OAuth login.[/green]")
+                return creds
+            except Exception:
+                console.print("[yellow][Auth] OAuth token expired/invalid.[/yellow]")
+
+        # 2. Try Loading Existing API Key
+        # Check ENV first
+        env_key = os.getenv("GOOGLE_API_KEY")
+        if env_key:
+             console.print("[green][Auth] Using GOOGLE_API_KEY from environment.[/green]")
+             return env_key
+             
+        if key_path.exists():
+            key = key_path.read_text().strip()
+            if key:
+                console.print("[green][Auth] Using saved API Key.[/green]")
+                return key
+
+        # 3. Interactive Selection
+        console.print(Panel.fit(
+            "[bold cyan]Gemini Authentication[/bold cyan]\n\n"
+            "Choose your preferred authentication method:\n"
+            "[1] API Key (Simple) - Paste a key from Google AI Studio\n"
+            "[2] OAuth Login (Advanced) - Use Client ID/Secret to log in via browser",
+            border_style="cyan"
+        ))
+
+        choice = Prompt.ask("Select method", choices=["1", "2"], default="1")
+
+        if choice == "1":
+            # API Key Flow
+            console.print("Get your key at: [underline]https://aistudio.google.com/app/apikey[/underline]")
+            new_key = Prompt.ask("Enter Gemini API Key", password=True)
+            if new_key:
+                key_path.write_text(new_key.strip())
+                console.print("[green][Auth] API Key saved![/green]")
+                return new_key.strip()
+
+        elif choice == "2":
+            # OAuth Flow
+            if not creds_path.exists():
+                console.print("\n[yellow]No 'credentials.json' found.[/yellow]")
+                console.print("You need an OAuth Client ID (Desktop App) from Google Cloud Console.")
+                client_id = Prompt.ask("Enter Client ID")
+                client_secret = Prompt.ask("Enter Client Secret", password=True)
+                
+                if client_id and client_secret:
+                    client_config = {
+                        "installed": {
+                            "client_id": client_id.strip(),
+                            "client_secret": client_secret.strip(),
+                            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                            "token_uri": "https://oauth2.googleapis.com/token",
+                            "redirect_uris": ["urn:ietf:wg:oauth:2.0:oob", "http://localhost"]
+                        }
+                    }
+                    with open(creds_path, "w") as f:
+                        json.dump(client_config, f)
+            
+            try:
+                flow = InstalledAppFlow.from_client_secrets_file(str(creds_path), SCOPES)
+                console.print("\n[bold cyan]Please visit this URL to authorize:[/bold cyan]")
+                creds = flow.run_console()
+                
+                with open(token_path, "w") as token:
+                    token.write(creds.to_json())
+                console.print("[green][Auth] Login successful![/green]")
+                return creds
+            except Exception as e:
+                console.print(f"[red][Auth] OAuth failed: {e}[/red]")
+        
+        return None
