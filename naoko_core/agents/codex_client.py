@@ -284,6 +284,8 @@ class CodexClient:
             f"- Output ONLY the complete Java file content for {target_path.name}.\n"
             f"- You MUST include `public class {expected_class}` in the output.\n"
             f"- Preserve formatting, line breaks, ordering, and existing elements unless a change is required by the new endpoint.\n"
+            f"- Do NOT add new top-level classes/interfaces/enums/records/annotations in this file.\n"
+            f"- Keep this file single-responsibility: only update {expected_class}.\n"
             f"- Do NOT remove any existing code unless specified.\n"
             f"- Do NOT return a diff, markdown fences, or review/analysis text."
         )
@@ -363,6 +365,8 @@ class CodexClient:
                 f"- Output ONLY the complete Java file content for {self.last_target_path.name}.\n"
                 f"- You MUST include `public class {expected_class}` in the output.\n"
                 f"- Preserve formatting, line breaks, ordering, and existing elements unless required by the fix.\n"
+                f"- Do NOT add new top-level classes/interfaces/enums/records/annotations in this file.\n"
+                f"- Keep this file single-responsibility: only update {expected_class}.\n"
                 f"- Preserve unrelated logic.\n"
                 f"- Do NOT return analysis, review text, or markdown fences."
             )

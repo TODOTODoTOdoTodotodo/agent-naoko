@@ -181,6 +181,8 @@ class GeminiClient:
             "- If none, write: Additional Considerations: None\n\n"
             "User Questions (only if user confirmation is required):\n"
             "- Q: <question> | Example: <short suggested answer> | Required: yes/no\n\n"
+            "Review Focus:\n"
+            "- Verify the controller file contains only the target controller class (no extra top-level classes).\n\n"
             f"Requirements:\n{req_content}\n\n"
             f"Current Code Implementation:\n{current_code}\n"
         )
