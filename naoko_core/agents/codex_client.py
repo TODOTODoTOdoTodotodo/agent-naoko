@@ -1,10 +1,13 @@
 import os
 import time
+import requests
 import difflib
 import subprocess
 import re
 from pathlib import Path
 from rich.console import Console
+from ..io.git_ops import GitOps
+from ..auth import AuthManager
 
 console = Console()
 
@@ -13,20 +16,21 @@ class CodexClient:
         self.root_dir = root_dir
         self.artifacts_dir = self.root_dir / "artifacts"
         self.dry_run = dry_run
+        self.has_codex_cli = False
         
-        # Verify CLI tools availability
+        self.token = AuthManager.get_codex_token()
+        self.api_url = os.getenv("CODEX_API_URL", "https://api.openai.com/v1/chat/completions") 
+        self.model = "gpt-5.2_codex-medium"
+
         if not self.dry_run:
             os.makedirs(self.artifacts_dir, exist_ok=True)
-            # Check for codex CLI availability
             try:
                 subprocess.run(["codex", "--version"], capture_output=True, check=True)
                 self.has_codex_cli = True
             except (subprocess.CalledProcessError, FileNotFoundError):
-                console.print("[yellow][Codex] 'codex' CLI not found. Will default to Gemini Fallback.[/yellow]")
                 self.has_codex_cli = False
 
     def _clean_code(self, text: str) -> str:
-        """Removes markdown code fences if present."""
         if not text: return ""
         pattern = r"```(?:\w+)?\n(.*?)```"
         match = re.search(pattern, text, re.DOTALL)
@@ -35,12 +39,12 @@ class CodexClient:
         return text.strip()
 
     def _call_gemini_fallback(self, prompt: str) -> str:
-        """Fallback to Gemini CLI."""
         console.print("[yellow][Codex] Switching to Gemini CLI (Fallback)...[/yellow]")
         try:
-            command = ["gemini", prompt, "--output-format", "text"]
+            command = ["gemini", "--output-format", "text"]
             result = subprocess.run(
                 command, 
+                input=prompt,
                 capture_output=True, 
                 text=True, 
                 encoding='utf-8', 
@@ -55,11 +59,7 @@ class CodexClient:
         return ""
 
     def _call_codex_cli(self, prompt: str) -> str:
-        """Executes the external 'codex' CLI command."""
-        # Adjust command format based on actual CLI spec
-        # Assuming: codex prompt "..." --model ...
         command = ["codex", "prompt", prompt, "--model", "gpt-5.2_codex-medium"]
-        
         try:
             console.print(f"[magenta][Codex CLI] Executing command...[/magenta]")
             result = subprocess.run(
@@ -69,30 +69,73 @@ class CodexClient:
                 encoding='utf-8', 
                 timeout=120
             )
-            
             if result.returncode != 0:
                 console.print(f"[red][Codex CLI] Error: {result.stderr.strip()}[/red]")
                 return ""
-            
             return self._clean_code(result.stdout)
         except Exception as e:
             console.print(f"[red][Codex CLI] Execution failed: {e}[/red]")
             return ""
 
     def _generate_code(self, prompt: str) -> str:
-        """
-        Tries Codex CLI, then falls back to Gemini CLI.
-        """
         if self.dry_run: return ""
 
         if self.has_codex_cli:
             code = self._call_codex_cli(prompt)
             if code: return code
-            console.print("[red][Codex] CLI execution failed. Trying fallback.[/red]")
-        
-        return self._call_gemini_fallback(prompt)
+            console.print("[red][Codex] CLI execution failed. Trying API/Fallback.[/red]")
 
-    def implement(self, req_path: str) -> tuple[str, bool]:
+        failures = 0
+        max_retries = 3
+        
+        system_prompt = (
+            "You are an expert Java developer. Output ONLY the raw Java code. No markdown.\n"
+            "Rules:\n"
+            "1. Package declaration MUST match the directory structure (e.g., 'package com.example;').\n"
+            "2. Ensure the file ends with a newline character."
+        )
+
+        while failures < max_retries:
+            if not self.token:
+                console.print("[yellow][Codex] No token found. Skipping to fallback.[/yellow]")
+                failures = max_retries
+                break
+
+            try:
+                console.print(f"[magenta][Codex] API Request (Attempt {failures+1}/{max_retries})...")
+                headers = {
+                    "Authorization": f"Bearer {self.token}",
+                    "Content-Type": "application/json"
+                }
+                payload = {
+                    "model": self.model,
+                    "messages": [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": prompt}
+                    ],
+                    "temperature": 0.2
+                }
+                
+                response = requests.post(self.api_url, json=payload, headers=headers, timeout=60)
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    content = data["choices"][0]["message"]["content"]
+                    return self._clean_code(content)
+                else:
+                    console.print(f"[yellow][Codex] API Error {response.status_code}: {response.text}[/yellow]")
+                    failures += 1
+            
+            except Exception as e:
+                console.print(f"[yellow][Codex] Connection Error: {e}[/yellow]")
+                failures += 1
+                time.sleep(2)
+
+        console.print("[red][Codex] All API attempts failed.[/red]")
+        fallback_prompt = f"{system_prompt}\n\nUser Request:\n{prompt}"
+        return self._call_gemini_fallback(fallback_prompt)
+
+    def implement(self, req_path: str, style_guide_path: str = None) -> tuple[str, bool]:
         console.print(f"[magenta]Codex Agent:[/magenta] Reading requirements from '{req_path}'...")
         
         output_path = self.artifacts_dir / "patch.diff"
@@ -105,6 +148,13 @@ class CodexClient:
              
         with open(req_path, 'r') as f: req_content = f.read()
         
+        style_instruction = ""
+        if style_guide_path and os.path.exists(style_guide_path):
+            console.print(f"[magenta]Codex Agent:[/magenta] Loading style guide from '{style_guide_path}'...")
+            with open(style_guide_path, 'r') as f:
+                style_content = f.read()
+            style_instruction = f"Strictly follow these CODING STYLE GUIDELINES:\n{style_content}\n\n"
+        
         target_path.parent.mkdir(parents=True, exist_ok=True)
         if not target_path.exists():
             target_path.write_text("package com.example;\n\npublic class User {\n    private String username;\n}\n", encoding="utf-8")
@@ -112,9 +162,10 @@ class CodexClient:
         old_content = target_path.read_text(encoding="utf-8")
         
         prompt = (
+            f"{style_instruction}"
             f"Requirements:\n{req_content}\n\n"
             f"Current Code (User.java):\n{old_content}\n\n"
-            f"Task: Implement the requirements. Update the existing code. "
+            f"Task: Implement the requirements by updating the existing code.\n"
             f"Return the COMPLETE, valid Java file content."
         )
 
@@ -124,7 +175,6 @@ class CodexClient:
             console.print("[red][Codex] Failed to generate code.[/red]")
             return str(output_path), False
 
-        # Generate Diff for Artifacts (Reference only)
         diff_gen = difflib.unified_diff(
             old_content.splitlines(keepends=True),
             new_content.splitlines(keepends=True),
@@ -135,7 +185,6 @@ class CodexClient:
         with open(output_path, "w", encoding="utf-8") as f:
             f.write(diff_content)
 
-        # OVERWRITE STRATEGY
         console.print(f"[magenta][Codex] Updating file: {target_path}[/magenta]")
         target_path.write_text(new_content, encoding="utf-8")
         
@@ -148,6 +197,10 @@ class CodexClient:
         status = "SUITABLE"
         
         if self.dry_run: return str(output_path), status
+
+        if not os.path.exists(review_path):
+             console.print("[red][Codex] Review file missing. Aborting refine.[/red]")
+             return str(output_path), "FAILED"
 
         with open(review_path, 'r') as f: review_content = f.read()
 
@@ -164,7 +217,7 @@ class CodexClient:
             prompt = (
                 f"Review Feedback:\n{review_content}\n\n"
                 f"Current Code:\n{old_content}\n\n"
-                f"Task: Fix the code based on the review. "
+                f"Task: Fix the code based on the review.\n"
                 f"Return the COMPLETE, valid Java file content."
             )
             

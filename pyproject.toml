@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "naoko"
+version = "0.1.0"
+description = "Dual-Agent AI Architect System for Automated Coding"
+requires-python = ">=3.9"
+dependencies = [
+    "typer",
+    "rich",
+    "pandas",
+    "openpyxl",
+    "pypdf",
+    "python-pptx",
+    "google-generativeai",
+    "google-auth-oauthlib",
+    "google-auth-httplib2",
+    "requests"
+]
+
+[project.scripts]
+naoko = "naoko_core.main:app"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["naoko_core*"]

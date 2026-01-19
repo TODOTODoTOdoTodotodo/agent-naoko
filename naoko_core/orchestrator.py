@@ -8,11 +8,13 @@ from .agents.codex_client import CodexClient
 from .io.git_ops import GitOps
 
 class Orchestrator:
-    def __init__(self, doc_path: str, max_rounds: int, dry_run: bool):
-        # Force absolute path for document
+    def __init__(self, doc_path: str, max_rounds: int, dry_run: bool, 
+                 entry_point: str = None, existing_project: bool = False):
         self.doc_path = str(Path(doc_path).resolve())
         self.max_rounds = max_rounds
         self.dry_run = dry_run
+        self.entry_point = entry_point
+        self.existing_project = existing_project
         self.console = Console()
         
         self.root_dir = Path(os.getcwd()).resolve()
@@ -20,22 +22,28 @@ class Orchestrator:
         self.codex = CodexClient(self.root_dir, dry_run)
 
     def run(self):
-        self.console.print(Panel.fit("Phase 1: Planning", border_style="green"))
+        self.console.print(Panel.fit("Phase 1: Planning & Analysis", border_style="green"))
         if not os.path.exists(self.doc_path):
              self.console.print(f"[red]Error:[/red] Document '{self.doc_path}' not found.")
              return
 
-        # 1. Planning
+        # 1-A. Style Analysis (If existing project)
+        style_guide_path = None
+        if self.entry_point:
+            self.console.print(f"[bold]Targeting existing codebase starting at:[/bold] {self.entry_point}")
+            style_guide_path = self.gemini.analyze_style(self.entry_point)
+
+        # 1-B. Requirement Planning
         req_path = self.gemini.plan(self.doc_path)
         
-        # Validation: Check if requirements generated successfully
         if not req_path or not os.path.exists(req_path) or os.path.getsize(req_path) == 0:
             self.console.print("[red]Critical Error: Planning failed. Requirement file is empty or missing.[/red]")
             return
 
         # 2. Implementation
         self.console.print(Panel.fit("Phase 2: Implementation", border_style="magenta"))
-        patch_path, applied = self.codex.implement(req_path)
+        # Pass style guide if available
+        patch_path, applied = self.codex.implement(req_path, style_guide_path)
         
         if not applied:
             self.console.print("[bold red]Critical Error: Implementation patch failed to apply. Aborting.[/bold red]")
@@ -69,8 +77,13 @@ class Orchestrator:
                  self.console.print("[yellow]Result: UNNECESSARY - Skipping fix...[/yellow]")
         
         if loop_success:
-            self.console.print(Panel.fit("Phase 4: Completion", border_style="green"))
-            GitOps.commit("feat: Implemented features from " + Path(self.doc_path).name, self.dry_run)
+            if self.existing_project:
+                self.console.print(Panel.fit("Phase 4: Completion (Draft)", border_style="yellow"))
+                self.console.print("[yellow]Existing project detected. Changes applied but NOT committed.[/yellow]")
+                self.console.print("Please review the changes and commit manually.")
+            else:
+                self.console.print(Panel.fit("Phase 4: Completion", border_style="green"))
+                GitOps.commit("feat: Implemented features from " + Path(self.doc_path).name, self.dry_run)
         else:
             self.console.print(Panel.fit("Phase 4: Failed", border_style="red"))
             self.console.print("[red]Workflow ended without a successful resolution.[/red]")
