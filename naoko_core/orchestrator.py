@@ -1,9 +1,11 @@
 from rich.console import Console
 from rich.panel import Panel
-from rich.prompt import Confirm, Prompt
+from rich.prompt import Confirm
 from pathlib import Path
 import os
 import secrets
+import select
+import sys
 from .agents.gemini_client import GeminiClient
 from .agents.codex_client import CodexClient
 from .io.git_ops import GitOps
@@ -49,6 +51,14 @@ class Orchestrator:
         self.run_log_path.parent.mkdir(parents=True, exist_ok=True)
         with open(self.run_log_path, "a", encoding="utf-8") as f:
             f.write(f"{message}\n")
+
+    def _prompt_with_timeout(self, question: str, default: str = "yes", timeout_sec: int = 15) -> str:
+        self.console.print(f"{question} (auto '{default}' after {timeout_sec}s)")
+        rlist, _, _ = select.select([sys.stdin], [], [], timeout_sec)
+        if rlist:
+            answer = sys.stdin.readline().strip()
+            return answer if answer else default
+        return default
 
     def run(self):
         if self.resume and not self.progress_path.exists():
@@ -151,7 +161,7 @@ class Orchestrator:
                             qtext = qtext.replace("Q:", "").strip()
 
                         prompt_text = f"{qtext}\nPress Enter to use the example."
-                        answer = Prompt.ask(prompt_text, default=example)
+                        answer = self._prompt_with_timeout(prompt_text, default=example, timeout_sec=15)
                         answers.append((qtext, answer))
 
                     if answers:
