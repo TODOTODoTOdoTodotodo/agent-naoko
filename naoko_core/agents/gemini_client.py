@@ -22,7 +22,7 @@ class GeminiClient:
                 console.print("[red][Gemini] 'gemini' CLI command not found. Agent disabled.[/red]")
                 self.dry_run = True
 
-    def _call_gemini_cli(self, prompt: str) -> str:
+    def _call_gemini_cli(self, prompt: str, timeout_sec: int = 180) -> str:
         """
         Executes 'gemini' CLI using STDIN to avoid argument length limits.
         """
@@ -39,7 +39,7 @@ class GeminiClient:
                 capture_output=True, 
                 text=True, 
                 encoding='utf-8', 
-                timeout=180
+                timeout=timeout_sec
             )
             
             if result.returncode != 0:
@@ -95,7 +95,7 @@ class GeminiClient:
             f"4. Architecture\n"
         )
         
-        result = self._call_gemini_cli(prompt)
+        result = self._call_gemini_cli(prompt, timeout_sec=3600)
         
         if result:
             style_path = Path(entry_point).parent / "CODING_STYLE.md"
