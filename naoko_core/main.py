@@ -9,7 +9,8 @@ def main(
     max_rounds: int = typer.Option(5, help="Maximum number of review rounds"),
     dry_run: bool = typer.Option(False, help="Run without executing actual agents"),
     entry_point: str = typer.Option(None, help="Path to the Controller file for style analysis (e.g. src/.../UserController.java)"),
-    existing_project: bool = typer.Option(False, help="Set flag if working on an existing project (skips auto-commit)")
+    existing_project: bool = typer.Option(False, help="Set flag if working on an existing project (skips auto-commit)"),
+    resume: str = typer.Option(None, help="Resume a previous run by session id")
 ):
     """
     Naoko Architect System: Automated Coding Agent.
@@ -25,7 +26,7 @@ def main(
     if existing_project:
         console.print("[yellow]Mode: Existing Project (No Auto-Commit)[/yellow]")
 
-    orchestrator = Orchestrator(doc_path, max_rounds, dry_run, entry_point, existing_project)
+    orchestrator = Orchestrator(doc_path, max_rounds, dry_run, entry_point, existing_project, resume)
     orchestrator.run()
 
 def app():

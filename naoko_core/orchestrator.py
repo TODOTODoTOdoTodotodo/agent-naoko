@@ -3,26 +3,30 @@ from rich.panel import Panel
 from rich.prompt import Confirm, Prompt
 from pathlib import Path
 import os
+import secrets
 from .agents.gemini_client import GeminiClient
 from .agents.codex_client import CodexClient
 from .io.git_ops import GitOps
 
 class Orchestrator:
     def __init__(self, doc_path: str, max_rounds: int, dry_run: bool, 
-                 entry_point: str = None, existing_project: bool = False):
+                 entry_point: str = None, existing_project: bool = False, resume: str = None):
         self.doc_path = str(Path(doc_path).resolve())
         self.max_rounds = max_rounds
         self.dry_run = dry_run
         self.entry_point = entry_point
         self.existing_project = existing_project
+        self.resume = resume
         self.console = Console()
         
         self.root_dir = Path(os.getcwd()).resolve()
         self.gemini = GeminiClient(self.root_dir, dry_run)
         self.codex = CodexClient(self.root_dir, dry_run)
         self.artifacts_dir = self.root_dir / "artifacts"
-        self.progress_path = self.artifacts_dir / "progress.md"
-        self.run_log_path = self.artifacts_dir / "run_log.md"
+        self.session_id = resume or secrets.token_hex(4)
+        self.session_dir = self.artifacts_dir / "sessions" / self.session_id
+        self.progress_path = self.session_dir / "progress.md"
+        self.run_log_path = self.session_dir / "run_log.md"
         self.state = self._load_state()
 
     def _load_state(self) -> dict:
@@ -47,7 +51,10 @@ class Orchestrator:
             f.write(f"{message}\n")
 
     def run(self):
-        self._log_run("run: start")
+        if self.resume and not self.progress_path.exists():
+            self.console.print(f"[red]Error:[/red] Session '{self.resume}' not found.")
+            return
+        self._log_run(f"run: start session={self.session_id}")
         self.console.print(Panel.fit("Phase 1: Planning & Analysis", border_style="green"))
         if not os.path.exists(self.doc_path):
              self.console.print(f"[red]Error:[/red] Document '{self.doc_path}' not found.")
