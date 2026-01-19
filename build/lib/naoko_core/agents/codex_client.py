@@ -1,5 +1,6 @@
 import os
 import time
+import threading
 import requests
 import difflib
 import subprocess
@@ -39,14 +40,33 @@ class CodexClient:
             return match.group(1).strip()
         return text.strip()
 
+    def _start_wait_timer(self, label: str) -> tuple[threading.Event, float]:
+        start = time.time()
+        stop_event = threading.Event()
+
+        def _ticker():
+            while not stop_event.wait(30):
+                elapsed = int(time.time() - start)
+                console.print(f"[dim]{label}... elapsed {elapsed}s[/dim]")
+
+        thread = threading.Thread(target=_ticker, daemon=True)
+        thread.start()
+        return stop_event, start
+
     def _call_gemini_fallback(self, prompt: str) -> str:
         console.print("[yellow][Codex] Switching to Gemini CLI (Fallback)...[/yellow]")
+        stop_event, start = self._start_wait_timer("Gemini CLI waiting")
         try:
             command = ["gemini", "--output-format", "text"]
             result = subprocess.run(command, input=prompt, capture_output=True, text=True, encoding='utf-8', timeout=1200)
+            elapsed = int(time.time() - start)
             if result.returncode == 0:
+                console.print(f"[dim][Gemini CLI] Done in {elapsed}s[/dim]")
                 return self._clean_code(result.stdout)
+            console.print(f"[dim][Gemini CLI] Finished in {elapsed}s (non-zero exit)[/dim]")
         except subprocess.TimeoutExpired:
+            elapsed = int(time.time() - start)
+            console.print(f"[yellow][Gemini CLI] Timed out after {elapsed}s.[/yellow]")
             console.print("[yellow][Codex-Fallback] Gemini timed out after 20 minutes.[/yellow]")
             choice = Prompt.ask(
                 "Continue waiting and retry? (Enter to use example)",
@@ -56,11 +76,16 @@ class CodexClient:
             if choice == "yes":
                 return self._call_gemini_fallback(prompt)
         except Exception as e:
+            elapsed = int(time.time() - start)
+            console.print(f"[dim][Gemini CLI] Failed after {elapsed}s[/dim]")
             console.print(f"[red][Codex-Fallback] Error: {e}[/red]")
+        finally:
+            stop_event.set()
         return ""
 
     def _call_codex_cli(self, prompt: str) -> str:
         command = ["codex", "exec", "-m", self.model, "-c", "reasoning.effort=\"medium\"", "-"]
+        stop_event, start = self._start_wait_timer("Codex CLI waiting")
         try:
             console.print(f"[magenta][Codex CLI] Executing command via STDIN...[/magenta]")
             result = subprocess.run(
@@ -71,12 +96,17 @@ class CodexClient:
                 encoding="utf-8",
                 timeout=1200,
             )
+            elapsed = int(time.time() - start)
             if result.returncode == 0:
+                console.print(f"[dim][Codex CLI] Done in {elapsed}s[/dim]")
                 return self._clean_code(result.stdout)
             if result.stderr.strip():
                 console.print(f"[red][Codex CLI] Error: {result.stderr.strip()}[/red]")
+            console.print(f"[dim][Codex CLI] Finished in {elapsed}s (non-zero exit)[/dim]")
             return ""
         except subprocess.TimeoutExpired:
+            elapsed = int(time.time() - start)
+            console.print(f"[yellow][Codex CLI] Timed out after {elapsed}s.[/yellow]")
             console.print("[yellow][Codex CLI] Timed out after 20 minutes.[/yellow]")
             choice = Prompt.ask(
                 "Continue waiting and retry? (Enter to use example)",
@@ -87,8 +117,12 @@ class CodexClient:
                 return self._call_codex_cli(prompt)
             return ""
         except Exception as e:
+            elapsed = int(time.time() - start)
+            console.print(f"[dim][Codex CLI] Failed after {elapsed}s[/dim]")
             console.print(f"[red][Codex CLI] Execution failed: {e}[/red]")
             return ""
+        finally:
+            stop_event.set()
 
     def _generate_code(self, prompt: str) -> str:
         if self.dry_run: return ""
@@ -102,6 +136,7 @@ class CodexClient:
 
         while failures < max_retries:
             if not self.token: break
+            stop_event, start = self._start_wait_timer("Codex API waiting")
             try:
                 console.print(f"[magenta][Codex] API Request (Attempt {failures+1}/3)...[/magenta]")
                 headers = {"Authorization": f"Bearer {self.token}", "Content-Type": "application/json"}
@@ -111,10 +146,15 @@ class CodexClient:
                     "temperature": 0.2
                 }
                 response = requests.post(self.api_url, json=payload, headers=headers, timeout=1200)
+                elapsed = int(time.time() - start)
                 if response.status_code == 200:
+                    console.print(f"[dim][Codex API] Done in {elapsed}s[/dim]")
                     return self._clean_code(response.json()["choices"][0]["message"]["content"])
+                console.print(f"[dim][Codex API] Finished in {elapsed}s (status {response.status_code})[/dim]")
                 failures += 1
             except requests.Timeout:
+                elapsed = int(time.time() - start)
+                console.print(f"[yellow][Codex API] Timed out after {elapsed}s.[/yellow]")
                 console.print("[yellow][Codex] API request timed out after 20 minutes.[/yellow]")
                 choice = Prompt.ask(
                     "Continue waiting and retry? (Enter to use example)",
@@ -125,9 +165,13 @@ class CodexClient:
                     failures += 1
                 time.sleep(1)
             except Exception as e:
+                elapsed = int(time.time() - start)
+                console.print(f"[dim][Codex API] Failed after {elapsed}s[/dim]")
                 console.print(f"[yellow][Codex] Connection Error: {e}[/yellow]")
                 failures += 1
                 time.sleep(1)
+            finally:
+                stop_event.set()
 
         return self._call_gemini_fallback(f"{system_prompt}\n\n{prompt}")
 
