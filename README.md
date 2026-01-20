@@ -113,6 +113,10 @@ naoko start ./docs/feature_req.pdf --entry-point src/main/java/com/example/UserC
 └── pyproject.toml          # CLI 패키지 설정
 ```
 
+## 🧾 변경 이력 (Changelog)
+
+자세한 변경 내역은 [history.md](history.md)를 참고하세요.
+
 ## ⚠️ 현재 상태 (v0.2.0)
 
 - **LLM 연동:** Gemini 3(CLI Proxy) 및 Codex API 연동 완료.
