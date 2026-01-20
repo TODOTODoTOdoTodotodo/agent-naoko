@@ -294,14 +294,17 @@ class CodexClient:
         output_path = self.artifacts_dir / "patch.diff"
         
         # Determine target
+        apply_changes = True
         if target_file and os.path.exists(target_file):
             target_path = Path(target_file)
+            apply_changes = False
         elif style_guide_path:
             target_path = Path(style_guide_path).parent / "ArticleController.java" # Fallback
         else:
             target_path = self.root_dir / "src" / "main" / "java" / "com" / "example" / "User.java"
         if not target_path.is_absolute():
             target_path = (self.root_dir / target_path).resolve()
+        output_root = self.artifacts_dir / "generated"
 
         if self.dry_run: return str(output_path), True
 
@@ -383,8 +386,9 @@ class CodexClient:
                 console.print(f"[red][Codex] Nested classes in controller output. See {self.error_log_path}[/red]")
                 return str(output_path), False
             for rel_path, content in files.items():
-                full_path = (self.root_dir / rel_path).resolve()
-                if not str(full_path).startswith(str(self.root_dir)):
+                base_root = self.root_dir if apply_changes else output_root
+                full_path = (base_root / rel_path).resolve()
+                if apply_changes and not str(full_path).startswith(str(self.root_dir)):
                     self._log_error(f"Skipped unsafe path: {rel_path}")
                     continue
                 full_path.parent.mkdir(parents=True, exist_ok=True)
@@ -421,10 +425,17 @@ class CodexClient:
         )
         with open(output_path, "w", encoding="utf-8") as f: f.write("".join(diff_gen))
 
-        console.print(f"[magenta]Codex Agent:[/magenta] Updating file: [bold]{target_path}[/bold]")
-        target_path.write_text(new_content, encoding="utf-8")
+        if apply_changes:
+            console.print(f"[magenta]Codex Agent:[/magenta] Updating file: [bold]{target_path}[/bold]")
+            target_path.write_text(new_content, encoding="utf-8")
+            self.last_target_path = target_path
+        else:
+            generated_path = (output_root / controller_rel).resolve()
+            generated_path.parent.mkdir(parents=True, exist_ok=True)
+            generated_path.write_text(new_content, encoding="utf-8")
+            self.last_target_path = generated_path
+            console.print(f"[yellow][Codex] Entry-point is reference-only. Generated output at: {generated_path}[/yellow]")
         
-        self.last_target_path = target_path
         return str(output_path), True
 
     def refine(self, review_path: str) -> tuple[str, str]:
