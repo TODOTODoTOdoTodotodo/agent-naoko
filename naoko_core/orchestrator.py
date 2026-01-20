@@ -12,17 +12,18 @@ from .io.git_ops import GitOps
 
 class Orchestrator:
     def __init__(self, doc_path: str, max_rounds: int, dry_run: bool, 
-                 entry_point: str = None, existing_project: bool = False, resume: str = None):
+                 entry_point: str = None, existing_project: bool = False, resume: str = None, gemini_quality: str = "high"):
         self.doc_path = str(Path(doc_path).resolve())
         self.max_rounds = max_rounds
         self.dry_run = dry_run
         self.entry_point = entry_point
         self.existing_project = existing_project
         self.resume = resume
+        self.gemini_quality = gemini_quality
         self.console = Console()
         
         self.root_dir = Path(os.getcwd()).resolve()
-        self.gemini = GeminiClient(self.root_dir, dry_run)
+        self.gemini = GeminiClient(self.root_dir, dry_run, self.gemini_quality)
         self.codex = CodexClient(self.root_dir, dry_run)
         self.artifacts_dir = self.root_dir / "artifacts"
         self.session_id = resume or secrets.token_hex(4)

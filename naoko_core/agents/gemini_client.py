@@ -11,12 +11,16 @@ from ..io.code_navigator import CodeNavigator
 console = Console()
 
 class GeminiClient:
-    def __init__(self, root_dir: Path, dry_run: bool = False):
+    def __init__(self, root_dir: Path, dry_run: bool = False, quality: str = "high"):
         self.root_dir = root_dir
         self.artifacts_dir = self.root_dir / "artifacts"
         self.dry_run = dry_run
-        self.primary_model = "gemini-3"
-        self.fallback_models = ["gemini-3-flash-preview", "gemini-2.5-pro", "gemini-2.5-flash"]
+        self.quality = quality
+        self.model_tiers = {
+            "high": ["gemini-3-pro-preview", "gemini-2.5-pro"],
+            "normal": ["gemini-3-flash-preview"],
+            "fast": ["gemini-2.5-flash", "gemini-2.5-flash-lite"],
+        }
         
         if not self.dry_run:
             try:
@@ -58,23 +62,31 @@ class GeminiClient:
 
         sanitized_prompt = re.sub(r"@", "＠", prompt)
         console.print(f"[dim][Gemini CLI] Executing command via STDIN (Length: {len(sanitized_prompt)} chars)...[/dim]")
-        stdout, stderr, code = self._call_gemini_cli_once(sanitized_prompt, timeout_sec, self.primary_model)
-        if code == 0:
-            return stdout
-        if "TerminalQuotaError" in stderr or "quota" in stderr.lower() or "rate limit" in stderr.lower():
-            console.print("[red][Gemini CLI] Quota exhausted. Stop for today.[/red]")
-            return ""
-        for fallback in self.fallback_models:
-            console.print(f"[yellow][Gemini CLI] Retrying with {fallback}...[/yellow]")
-            stdout, stderr, code = self._call_gemini_cli_once(sanitized_prompt, timeout_sec, fallback)
+        tier_order = ["high", "normal", "fast"]
+        start_index = tier_order.index(self.quality) if self.quality in tier_order else 0
+        model_sequence = []
+        for tier in tier_order[start_index:]:
+            model_sequence.extend(self.model_tiers.get(tier, []))
+
+        last_error = ""
+        for model in model_sequence:
+            stdout, stderr, code = self._call_gemini_cli_once(sanitized_prompt, timeout_sec, model)
             if code == 0:
                 return stdout
-            if "ModelNotFound" not in stderr:
-                break
-        if stderr == "timeout":
-            console.print(f"[red][Gemini CLI] Timeout expired.[/red]")
+            last_error = stderr
+            if "TerminalQuotaError" in stderr or "quota" in stderr.lower() or "rate limit" in stderr.lower():
+                console.print(f"[yellow][Gemini CLI] Quota/limit reached for {model}. Trying next tier...[/yellow]")
+                continue
+            if "ModelNotFound" in stderr:
+                console.print(f"[yellow][Gemini CLI] Model not found: {model}. Trying next...[/yellow]")
+                continue
+            if stderr == "timeout":
+                console.print(f"[red][Gemini CLI] Timeout expired.[/red]")
+                return ""
+            console.print(f"[red][Gemini CLI] Error: {stderr}[/red]")
             return ""
-        console.print(f"[red][Gemini CLI] Error: {stderr}[/red]")
+        if last_error:
+            console.print(f"[red][Gemini CLI] Failed: {last_error}[/red]")
         return ""
 
     def analyze_style(self, entry_point: str) -> str:
