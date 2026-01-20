@@ -2,6 +2,7 @@ import os
 import subprocess
 import shlex
 import re
+import shutil
 from pathlib import Path
 from rich.console import Console
 from ..io.doc_parser import DocParser
@@ -29,6 +30,11 @@ class GeminiClient:
         command = ["gemini", "--output-format", "text", "--model", model]
         try:
             console.print(f"[dim][Gemini CLI] Executing command via STDIN (Model: {model})...[/dim]")
+            env = os.environ.copy()
+            gemini_path = shutil.which("gemini")
+            if gemini_path:
+                gemini_bin = str(Path(gemini_path).resolve().parent)
+                env["PATH"] = f"{gemini_bin}:{env.get('PATH', '')}"
             result = subprocess.run(
                 command,
                 input=prompt,
@@ -36,6 +42,7 @@ class GeminiClient:
                 text=True,
                 encoding="utf-8",
                 timeout=timeout_sec,
+                env=env,
             )
             return result.stdout.strip(), result.stderr.strip(), result.returncode
         except subprocess.TimeoutExpired:
