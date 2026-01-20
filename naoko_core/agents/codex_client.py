@@ -296,6 +296,8 @@ class CodexClient:
             target_path = Path(style_guide_path).parent / "ArticleController.java" # Fallback
         else:
             target_path = self.root_dir / "src" / "main" / "java" / "com" / "example" / "User.java"
+        if not target_path.is_absolute():
+            target_path = (self.root_dir / target_path).resolve()
 
         if self.dry_run: return str(output_path), True
 
@@ -362,7 +364,7 @@ class CodexClient:
                     console.print(f"[red][Codex] Generation failed: {self.last_error}[/red]")
                 return str(output_path), False
 
-        controller_rel = target_path.relative_to(self.root_dir).as_posix()
+        controller_rel = target_path.relative_to(self.root_dir.resolve()).as_posix()
         if "FILE:" in new_content:
             files = self._parse_multifile_output(new_content)
             controller_content = files.get(controller_rel, "")
@@ -378,6 +380,12 @@ class CodexClient:
                 full_path.parent.mkdir(parents=True, exist_ok=True)
                 full_path.write_text(content, encoding="utf-8")
             new_content = controller_content
+        else:
+            top_level = re.findall(r"(?m)^(?:public\\s+)?(?:class|interface|enum|record)\\s+\\w+", new_content)
+            if len(top_level) > 1:
+                self._log_error("Multiple top-level types found without FILE sections.")
+                console.print(f"[red][Codex] Multiple top-level classes without FILE sections. See {self.error_log_path}[/red]")
+                return str(output_path), False
 
         # Safety Check: If new content is suspiciously short or doesn't look like Java
         if len(new_content) < len(old_content) * 0.5:
