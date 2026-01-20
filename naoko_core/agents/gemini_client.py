@@ -205,6 +205,8 @@ class GeminiClient:
             "User Questions (only if user confirmation is required):\n"
             "- Q: <question> | Example: <short suggested answer> | Required: yes/no\n\n"
             "Review Focus:\n"
+            "- The entry-point code is for reference and flow analysis, not for renaming or domain substitution.\n"
+            "- Do NOT suggest renaming the entry-point class or file based on requirements.\n"
             "- Verify the controller file contains only the target controller class (no extra top-level classes or inner static classes).\n\n"
             "Constraints:\n"
             "- Do not call tools.\n\n"
