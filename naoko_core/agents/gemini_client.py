@@ -203,7 +203,7 @@ class GeminiClient:
             "User Questions (only if user confirmation is required):\n"
             "- Q: <question> | Example: <short suggested answer> | Required: yes/no\n\n"
             "Review Focus:\n"
-            "- Verify the controller file contains only the target controller class (no extra top-level classes).\n\n"
+            "- Verify the controller file contains only the target controller class (no extra top-level classes or inner static classes).\n\n"
             "Constraints:\n"
             "- Do not call tools.\n\n"
             f"Requirements:\n{req_content}\n\n"

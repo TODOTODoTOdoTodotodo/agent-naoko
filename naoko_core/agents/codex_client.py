@@ -76,6 +76,10 @@ class CodexClient:
             return True
         return False
 
+    def _has_nested_types(self, text: str) -> bool:
+        # Disallow inner/static classes in controller output
+        return re.search(r"(?m)^[ \\t]+(?:public|private|protected)?\\s*(?:static\\s+)?(?:class|interface|enum|record)\\s+\\w+", text) is not None
+
     def _log_error(self, message: str) -> None:
         if not message:
             return
@@ -326,6 +330,8 @@ class CodexClient:
             f"- Preserve formatting, line breaks, ordering, and existing elements unless a change is required by the new endpoint.\n"
             f"- Do NOT add new top-level classes/interfaces/enums/records/annotations in this file.\n"
             f"- Keep this file single-responsibility: only update {expected_class}.\n"
+            f"- Do NOT add inner/static classes in this controller.\n"
+            f"- Place new DTOs/entities/services/repositories in separate files under appropriate packages.\n"
             f"- If new classes are required, output them as separate files using this format:\n"
             f"  FILE: <relative path>\n"
             f"  <full file content>\n"
@@ -372,6 +378,10 @@ class CodexClient:
                 self._log_error(f"Controller file missing in multi-file output: {controller_rel}")
                 console.print(f"[red][Codex] Generation failed. See {self.error_log_path}[/red]")
                 return str(output_path), False
+            if self._has_nested_types(controller_content):
+                self._log_error("Nested types found in controller output.")
+                console.print(f"[red][Codex] Nested classes in controller output. See {self.error_log_path}[/red]")
+                return str(output_path), False
             for rel_path, content in files.items():
                 full_path = (self.root_dir / rel_path).resolve()
                 if not str(full_path).startswith(str(self.root_dir)):
@@ -385,6 +395,10 @@ class CodexClient:
             if len(top_level) > 1:
                 self._log_error("Multiple top-level types found without FILE sections.")
                 console.print(f"[red][Codex] Multiple top-level classes without FILE sections. See {self.error_log_path}[/red]")
+                return str(output_path), False
+            if self._has_nested_types(new_content):
+                self._log_error("Nested types found in controller output.")
+                console.print(f"[red][Codex] Nested classes in controller output. See {self.error_log_path}[/red]")
                 return str(output_path), False
 
         # Safety Check: If new content is suspiciously short or doesn't look like Java
@@ -436,6 +450,8 @@ class CodexClient:
                 f"- Preserve formatting, line breaks, ordering, and existing elements unless required by the fix.\n"
                 f"- Do NOT add new top-level classes/interfaces/enums/records/annotations in this file.\n"
                 f"- Keep this file single-responsibility: only update {expected_class}.\n"
+                f"- Do NOT add inner/static classes in this controller.\n"
+                f"- Place new DTOs/entities/services/repositories in separate files under appropriate packages.\n"
                 f"- Preserve unrelated logic.\n"
                 f"- Do NOT return analysis, review text, or markdown fences."
             )
