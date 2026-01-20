@@ -6,6 +6,60 @@ console = Console()
 
 class GitOps:
     @staticmethod
+    def get_changed_files(repo_dir: str) -> list[str]:
+        """
+        Returns a list of changed files (staged + unstaged) relative to repo root.
+        """
+        try:
+            prefix = subprocess.run(
+                ["git", "rev-parse", "--show-prefix"],
+                cwd=repo_dir,
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout.strip()
+            status_lines = subprocess.run(
+                ["git", "status", "--porcelain=v1", "--untracked-files=all"],
+                cwd=repo_dir,
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout.splitlines()
+            unstaged = subprocess.run(
+                ["git", "diff", "--name-only"],
+                cwd=repo_dir,
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout.splitlines()
+            staged = subprocess.run(
+                ["git", "diff", "--name-only", "--cached"],
+                cwd=repo_dir,
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout.splitlines()
+            status_files = []
+            for line in status_lines:
+                if not line:
+                    continue
+                # Format: XY <path>
+                path = line[3:] if len(line) > 3 else ""
+                if path:
+                    status_files.append(path)
+            files = [f for f in (unstaged + staged + status_files) if f.strip()]
+            normalized = []
+            for f in files:
+                if prefix and f.startswith(prefix):
+                    normalized.append(f[len(prefix):])
+                else:
+                    normalized.append(f)
+            filtered = [f for f in normalized if f.startswith("src/")]
+            return sorted(set(filtered))
+        except Exception as e:
+            console.print(f"[red][GitOps] Failed to list changed files: {e}[/red]")
+            return []
+    @staticmethod
     def validate_patch(patch_path: str) -> bool:
         """
         Validates the patch using `git apply --check`.

@@ -134,8 +134,13 @@ class Orchestrator:
         for i in range(1, self.max_rounds + 1):
             self.console.print(f"\n[bold underline]Round {i}/{self.max_rounds}[/bold underline]")
             
-            target_path = getattr(self.codex, "last_target_path", None) or self.entry_point
-            review_path = self.gemini.review(patch_path, req_path, round_num=i, target_path=str(target_path) if target_path else None)
+            git_changed = GitOps.get_changed_files(str(self.root_dir))
+            target_paths = git_changed or getattr(self.codex, "last_written_paths", None)
+            if git_changed:
+                self._log_run(f"phase3: review using git-changed files count={len(git_changed)}")
+            elif not target_paths:
+                self._log_run("phase3: missing generated output for review (entry-point not reviewed)")
+            review_path = self.gemini.review(patch_path, req_path, round_num=i, target_paths=target_paths)
             if review_path and os.path.exists(review_path):
                 review_content = Path(review_path).read_text(encoding="utf-8")
                 questions = []
@@ -148,12 +153,17 @@ class Orchestrator:
                     if in_questions and stripped.startswith("##"):
                         break
                     if in_questions and stripped.startswith("-"):
-                        questions.append(stripped)
+                        if stripped.lower() in ("- none", "- none:"):
+                            continue
+                        if stripped.startswith("- Q:"):
+                            questions.append(stripped)
 
                 if questions:
                     answers = []
                     for qline in questions:
                         qtext = qline.lstrip("-").strip()
+                        if qtext.lower().endswith("none") or qtext.lower() == "none":
+                            continue
                         example = ""
                         if "Example:" in qtext:
                             parts = qtext.split("Example:", 1)
@@ -183,7 +193,7 @@ class Orchestrator:
                 self._log_run("phase3: status=SUITABLE")
                 break
             elif status == "FAILED":
-                self.console.print("[bold red]Result: FAILED - Patch application failed during refinement. Aborting.[/bold red]")
+                self.console.print("[bold red]Result: FAILED - Review could not proceed (missing generated code). Aborting.[/bold red]")
                 self.state["last_failed_phase"] = "phase3"
                 self.state["phase3_status"] = "FAILED"
                 self._save_state()
@@ -211,6 +221,11 @@ class Orchestrator:
             self.state["phase4_status"] = "COMPLETE"
             self._save_state()
             self._log_run("phase4: status=COMPLETE")
+            diagram_targets = getattr(self.codex, "last_written_paths", None) or GitOps.get_changed_files(str(self.root_dir))
+            if diagram_targets:
+                diagram_path = self.gemini.generate_diagrams(diagram_targets)
+                if diagram_path:
+                    self._log_run(f"phase4: diagrams_path={diagram_path}")
         else:
             self.console.print(Panel.fit("Phase 4: Failed", border_style="red"))
             self.console.print("[red]Workflow ended without a successful resolution.[/red]")

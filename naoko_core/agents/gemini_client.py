@@ -169,7 +169,7 @@ class GeminiClient:
             return str(output_path)
         return ""
 
-    def review(self, patch_path: str, req_path: str, round_num: int, target_path: str | None = None) -> str:
+    def review(self, patch_path: str, req_path: str, round_num: int, target_paths: list[str] | str | None = None) -> str:
         console.print(f"[blue]Gemini Agent:[/blue] Reviewing code (Round {round_num})...")
         
         output_path = self.artifacts_dir / "review.md"
@@ -177,17 +177,24 @@ class GeminiClient:
         
         with open(req_path, 'r') as f: req_content = f.read()
         
-        if target_path:
-            target_path = Path(target_path)
-            if not target_path.is_absolute():
-                target_path = (self.root_dir / target_path).resolve()
-        else:
-            target_path = self.root_dir / "src" / "main" / "java" / "com" / "example" / "User.java"
-        current_code = ""
-        if target_path.exists():
-            current_code = target_path.read_text(encoding="utf-8")
-        else:
-            current_code = f"(File not found: {target_path})"
+        resolved_paths: list[Path] = []
+        if target_paths:
+            if isinstance(target_paths, str):
+                target_paths = [target_paths]
+            for tpath in target_paths:
+                path_obj = Path(tpath)
+                if not path_obj.is_absolute():
+                    path_obj = (self.root_dir / path_obj).resolve()
+                resolved_paths.append(path_obj)
+
+        code_sections = []
+        for path_obj in resolved_paths:
+            if path_obj.exists():
+                content = path_obj.read_text(encoding="utf-8")
+                code_sections.append(f"FILE: {path_obj}\n{content}")
+            else:
+                code_sections.append(f"FILE: {path_obj}\n(File not found)")
+        current_code = "\n\n".join(code_sections) if code_sections else "(Generated code not available)"
 
         prompt = (
             "Review the code against the requirements and respond in this exact format.\n\n"
@@ -205,12 +212,13 @@ class GeminiClient:
             "User Questions (only if user confirmation is required):\n"
             "- Q: <question> | Example: <short suggested answer> | Required: yes/no\n\n"
             "Review Focus:\n"
-            "- The entry-point code is for reference and flow analysis, not for renaming or domain substitution.\n"
-            "- Do NOT suggest renaming the entry-point class or file based on requirements.\n"
+            "- Review ONLY the generated/applied files listed below, not the entry-point reference file.\n"
+            "- If generated code is missing, report that as the primary issue and do not evaluate the entry-point.\n"
             "- Verify the controller file contains only the target controller class (no extra top-level classes or inner static classes).\n\n"
             "Constraints:\n"
             "- Do not call tools.\n\n"
             f"Requirements:\n{req_content}\n\n"
+            f"Generated Code Paths:\n{', '.join(str(p) for p in resolved_paths) if resolved_paths else '(none)'}\n\n"
             f"Current Code Implementation:\n{current_code}\n"
         )
         
@@ -219,4 +227,49 @@ class GeminiClient:
         if result:
             with open(output_path, "w", encoding="utf-8") as f: f.write(result)
             
+        return str(output_path)
+
+    def generate_diagrams(self, target_paths: list[str]) -> str:
+        console.print("[blue]Gemini Agent:[/blue] Generating class diagram and flowchart...")
+        output_path = self.artifacts_dir / "diagrams.md"
+        if self.dry_run:
+            return str(output_path)
+
+        code_sections = []
+        for tpath in target_paths:
+            path_obj = Path(tpath)
+            if not path_obj.is_absolute():
+                path_obj = (self.root_dir / path_obj).resolve()
+            if not path_obj.exists():
+                continue
+            content = path_obj.read_text(encoding="utf-8")
+            code_sections.append(f"FILE: {path_obj.relative_to(self.root_dir).as_posix()}\n{content}")
+
+        if not code_sections:
+            return str(output_path)
+
+        prompt = (
+            "Create two Mermaid diagrams based on the provided code files.\n"
+            "Output format:\n"
+            "Class Diagram:\n"
+            "```mermaid\n"
+            "classDiagram\n"
+            "<diagram>\n"
+            "```\n\n"
+            "Flowchart:\n"
+            "```mermaid\n"
+            "flowchart TD\n"
+            "<diagram>\n"
+            "```\n\n"
+            "Constraints:\n"
+            "- Use only Mermaid syntax.\n"
+            "- Do not include analysis text.\n"
+            "- Keep names consistent with the code.\n\n"
+            f"Code:\n{chr(10).join(code_sections)}\n"
+        )
+
+        result = self._call_gemini_cli(prompt)
+        if result:
+            with open(output_path, "w", encoding="utf-8") as f:
+                f.write(result)
         return str(output_path)

@@ -13,7 +13,7 @@
 Naoko는 "사고(기획/리뷰)"와 "실행(코딩)"을 분리하여, LLM이 요구사항을 환각하거나 검증되지 않은 코드를 작성하는 문제를 방지합니다.
 
 - **Gemini 에이전트(아키텍트):** 기획 문서(PDF, PPTX, XLSX)를 읽고 요구사항을 추출하며, 기존 코드의 스타일을 분석하고 엄격한 코드 리뷰를 수행합니다.
-- **Codex 에이전트(개발자):** 요구사항 및 스타일 가이드를 바탕으로 코드를 구현(Overwrite 전략)하고, 리뷰 피드백에 따라 반복 수정합니다.
+- **Codex 에이전트(개발자):** 요구사항 및 스타일 가이드를 바탕으로 코드를 구현하고, 리뷰 피드백에 따라 반복 수정합니다. 기존 프로젝트 모드에서는 엔트리포인트를 참조만 하며 파일 분리를 유지합니다.
 
 ## 🔄 워크플로우
 
@@ -22,15 +22,17 @@ Naoko는 "사고(기획/리뷰)"와 "실행(코딩)"을 분리하여, LLM이 요
     - 분석: 기존 프로젝트인 경우, 시작점과 연관된 파일을 분석하여 `CODING_STYLE.md` 생성.
     - 출력: 구조화된 `requirements_request.md`.
 2.  **구현 단계:**
-    - 동작: Codex 에이전트가 코드를 생성하고 파일을 직접 업데이트(Overwrite)합니다.
+    - 동작: Codex 에이전트가 코드를 생성하고 변경 파일을 업데이트합니다.
+    - 기존 프로젝트 모드: 엔트리포인트는 참조용이며 직접 변경하지 않습니다.
     - 기록: 변경 사항은 `artifacts/patch.diff`에 기록됩니다.
 3.  **리뷰 루프(반복 개선):**
-    - **리뷰:** Gemini가 요구사항 및 현재 코드 전체를 비교 분석합니다.
-    - **판단:** Codex가 리뷰를 판정(Suitable/Changes Needed/Hold/Unnecessary)합니다.
+    - **리뷰:** Gemini가 요구사항과 변경된 파일(`git diff` + untracked 포함)을 비교 분석합니다.
+    - **판단:** Codex가 리뷰를 판정(Suitable/Changes Needed/Hold/Unnecessary)하고 수정합니다.
     - **반복:** 최대 5회까지 반복하며 `SUITABLE` 판정 시 종료합니다.
 4.  **완료:**
     - 신규 프로젝트인 경우 요약 메시지로 Git 커밋을 자동 생성합니다.
     - 기존 프로젝트인 경우 `git apply` 상태로 유지하여 사용자가 최종 검토하게 합니다.
+    - 완료 시점에 클래스 다이어그램과 플로우차트를 `artifacts/diagrams.md`로 생성합니다.
 
 ## 🚀 시작하기
 
@@ -70,6 +72,8 @@ naoko start ./docs/feature_req.pdf --entry-point src/main/java/com/example/UserC
 - `--max-rounds [N]`: 리뷰 루프 횟수 제한 (기본 5회).
 - `--dry-run`: 실제 파일 수정이나 Git 반영 없이 흐름만 확인.
 - `--entry-point [PATH]`: 스타일 분석 기준이 될 소스 파일 경로.
+- `--resume [ID]`: 이전 세션 상태에서 이어서 실행.
+- `--gemini-quality [high|normal|fast]`: 리뷰/기획 품질 선택.
 
 ## 🧩 Codex Skill 등록
 
@@ -114,4 +118,3 @@ naoko start ./docs/feature_req.pdf --entry-point src/main/java/com/example/UserC
 - **LLM 연동:** Gemini 3(CLI Proxy) 및 Codex API 연동 완료.
 - **코드 스타일 분석:** 기존 프로젝트 분석 및 `CODING_STYLE.md` 기반 개발 지원.
 - **안정성:** STDIN 파이프 방식 도입으로 대용량 컨텍스트 처리 지원 및 Overwrite 전략으로 패치 오류 해결.
-

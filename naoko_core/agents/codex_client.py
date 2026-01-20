@@ -310,38 +310,60 @@ class CodexClient:
 
         with open(req_path, 'r') as f: req_content = f.read()
         
-        if not target_path.exists():
-            target_path.parent.mkdir(parents=True, exist_ok=True)
-            target_path.write_text("// New File\n", encoding="utf-8")
-        
-        old_content = target_path.read_text(encoding="utf-8")
+        reference_content = ""
+        if apply_changes:
+            if not target_path.exists():
+                target_path.parent.mkdir(parents=True, exist_ok=True)
+                target_path.write_text("// New File\n", encoding="utf-8")
+            old_content = target_path.read_text(encoding="utf-8")
+        else:
+            reference_content = target_path.read_text(encoding="utf-8") if target_path.exists() else ""
+            old_content = ""
         
         style_instruction = ""
         if style_guide_path and os.path.exists(style_guide_path):
             console.print(f"[magenta]Codex Agent:[/magenta] Applying style guide from '{style_guide_path}'...")
             style_instruction = f"STYLE GUIDELINES:\n{Path(style_guide_path).read_text()}\n\n"
         
-        expected_class = target_path.stem
-        prompt = (
-            f"{style_instruction}"
-            f"Requirements:\n{req_content}\n\n"
-            f"Current File Content ({target_path.name}):\n```java\n{old_content}\n```\n\n"
-            f"Task: Implement the requirements into this file.\n"
-            f"Constraints:\n"
-            f"- Output ONLY the complete Java file content for {target_path.name}.\n"
-            f"- You MUST include `public class {expected_class}` in the output.\n"
-            f"- Preserve formatting, line breaks, ordering, and existing elements unless a change is required by the new endpoint.\n"
-            f"- Do NOT add new top-level classes/interfaces/enums/records/annotations in this file.\n"
-            f"- Keep this file single-responsibility: only update {expected_class}.\n"
-            f"- Do NOT add inner/static classes in this controller.\n"
-            f"- Place new DTOs/entities/services/repositories in separate files under appropriate packages.\n"
-            f"- If new classes are required, output them as separate files using this format:\n"
-            f"  FILE: <relative path>\n"
-            f"  <full file content>\n"
-            f"- Include the controller file as a FILE section when using multi-file output.\n"
-            f"- Do NOT remove any existing code unless specified.\n"
-            f"- Do NOT return a diff, markdown fences, or review/analysis text."
-        )
+        expected_class = target_path.stem if apply_changes else None
+        if apply_changes:
+            prompt = (
+                f"{style_instruction}"
+                f"Requirements:\n{req_content}\n\n"
+                f"Current File Content ({target_path.name}):\n```java\n{old_content}\n```\n\n"
+                f"Task: Implement the requirements into this file.\n"
+                f"Constraints:\n"
+                f"- Output ONLY the complete Java file content for {target_path.name}.\n"
+                f"- You MUST include `public class {expected_class}` in the output.\n"
+                f"- Preserve formatting, line breaks, ordering, and existing elements unless a change is required by the new endpoint.\n"
+                f"- Maintain import namespace consistency with the surrounding codebase (e.g., avoid mixing javax/jakarta).\n"
+                f"- Do NOT add new top-level classes/interfaces/enums/records/annotations in this file.\n"
+                f"- Keep this file single-responsibility: only update {expected_class}.\n"
+                f"- Do NOT add inner/static classes in this controller.\n"
+                f"- Place new DTOs/entities/services/repositories in separate files under appropriate packages.\n"
+                f"- If new classes are required, output them as separate files using this format:\n"
+                f"  FILE: <relative path>\n"
+                f"  <full file content>\n"
+                f"- Include the controller file as a FILE section when using multi-file output.\n"
+                f"- Do NOT remove any existing code unless specified.\n"
+                f"- Do NOT return a diff, markdown fences, or review/analysis text."
+            )
+        else:
+            prompt = (
+                f"{style_instruction}"
+                f"Requirements:\n{req_content}\n\n"
+                f"Reference Entry-Point ({target_path.name}) for flow analysis only:\n```java\n{reference_content}\n```\n\n"
+                f"Task: Implement the requirements by creating/updating the appropriate files.\n"
+                f"Constraints:\n"
+                f"- The entry-point file is reference-only. Do NOT output or modify {target_path.name}.\n"
+                f"- Maintain import namespace consistency with the existing project (e.g., avoid mixing javax/jakarta).\n"
+                f"- Output ALL changes using multi-file format only:\n"
+                f"  FILE: <relative path>\n"
+                f"  <full file content>\n"
+                f"- Place controllers, services, repositories, entities, and DTOs in their proper packages.\n"
+                f"- Do NOT add inner/static classes in controllers; use separate files.\n"
+                f"- Do NOT return a diff, markdown fences, or review/analysis text."
+            )
 
         new_content = self._generate_code(
             prompt,
@@ -374,17 +396,24 @@ class CodexClient:
                 return str(output_path), False
 
         controller_rel = target_path.relative_to(self.root_dir.resolve()).as_posix()
+        selected_review_path = None
+        written_paths = []
         if "FILE:" in new_content:
             files = self._parse_multifile_output(new_content)
+            if not apply_changes and controller_rel in files:
+                self._log_error(f"Entry-point output provided despite reference-only: {controller_rel}")
+                console.print(f"[red][Codex] Entry-point was output. See {self.error_log_path}[/red]")
+                return str(output_path), False
             controller_content = files.get(controller_rel, "")
-            if not controller_content:
-                self._log_error(f"Controller file missing in multi-file output: {controller_rel}")
-                console.print(f"[red][Codex] Generation failed. See {self.error_log_path}[/red]")
-                return str(output_path), False
-            if self._has_nested_types(controller_content):
-                self._log_error("Nested types found in controller output.")
-                console.print(f"[red][Codex] Nested classes in controller output. See {self.error_log_path}[/red]")
-                return str(output_path), False
+            if apply_changes:
+                if not controller_content:
+                    self._log_error(f"Controller file missing in multi-file output: {controller_rel}")
+                    console.print(f"[red][Codex] Generation failed. See {self.error_log_path}[/red]")
+                    return str(output_path), False
+                if self._has_nested_types(controller_content):
+                    self._log_error("Nested types found in controller output.")
+                    console.print(f"[red][Codex] Nested classes in controller output. See {self.error_log_path}[/red]")
+                    return str(output_path), False
             for rel_path, content in files.items():
                 base_root = self.root_dir if apply_changes else output_root
                 full_path = (base_root / rel_path).resolve()
@@ -393,8 +422,21 @@ class CodexClient:
                     continue
                 full_path.parent.mkdir(parents=True, exist_ok=True)
                 full_path.write_text(content, encoding="utf-8")
-            new_content = controller_content
+                written_paths.append(full_path)
+            if not apply_changes:
+                for rel_path in files.keys():
+                    if "/controller/" in rel_path and rel_path.endswith("Controller.java"):
+                        selected_review_path = (output_root / rel_path).resolve()
+                        break
+                if not selected_review_path and files:
+                    first_rel = next(iter(files.keys()))
+                    selected_review_path = (output_root / first_rel).resolve()
+            new_content = controller_content if apply_changes else "\n".join(files.values())
         else:
+            if not apply_changes:
+                self._log_error("Reference-only run requires multi-file FILE sections.")
+                console.print(f"[red][Codex] Missing FILE sections for reference-only run. See {self.error_log_path}[/red]")
+                return str(output_path), False
             top_level = re.findall(r"(?m)^(?:public\\s+)?(?:class|interface|enum|record)\\s+\\w+", new_content)
             if len(top_level) > 1:
                 self._log_error("Multiple top-level types found without FILE sections.")
@@ -406,7 +448,7 @@ class CodexClient:
                 return str(output_path), False
 
         # Safety Check: If new content is suspiciously short or doesn't look like Java
-        if len(new_content) < len(old_content) * 0.5:
+        if old_content and len(new_content) < len(old_content) * 0.5:
             self._log_error("Generated code is significantly shorter than original.")
             console.print("[red][Codex] Warning: Generated code is significantly shorter than original. Aborting overwrite to protect file.[/red]")
             console.print(f"[dim]Generated: {new_content[:200]}...[/dim]")
@@ -429,12 +471,20 @@ class CodexClient:
             console.print(f"[magenta]Codex Agent:[/magenta] Updating file: [bold]{target_path}[/bold]")
             target_path.write_text(new_content, encoding="utf-8")
             self.last_target_path = target_path
+            if not written_paths:
+                written_paths.append(target_path)
         else:
-            generated_path = (output_root / controller_rel).resolve()
-            generated_path.parent.mkdir(parents=True, exist_ok=True)
-            generated_path.write_text(new_content, encoding="utf-8")
+            generated_path = selected_review_path or (output_root / "generated_output.java").resolve()
+            if not selected_review_path:
+                generated_path.parent.mkdir(parents=True, exist_ok=True)
+                generated_path.write_text(new_content, encoding="utf-8")
             self.last_target_path = generated_path
             console.print(f"[yellow][Codex] Entry-point is reference-only. Generated output at: {generated_path}[/yellow]")
+            if selected_review_path and selected_review_path not in written_paths:
+                written_paths.append(selected_review_path)
+
+        if written_paths:
+            self.last_written_paths = written_paths
         
         return str(output_path), True
 
@@ -445,35 +495,101 @@ class CodexClient:
         if not os.path.exists(review_path): return str(output_path), "FAILED"
         review_content = Path(review_path).read_text()
 
+        missing_markers = [
+            "Generated code is missing",
+            "Generated code not available",
+            "File not found",
+            "provide the generated code",
+            "paths to the implemented files",
+            "initiate the implementation",
+        ]
+        if any(marker in review_content for marker in missing_markers):
+            with open(output_path, "w", encoding="utf-8") as f:
+                f.write("Status: FAILED\nReason: Review reported missing generated code.\n")
+            return str(output_path), "FAILED"
+
         status = "CHANGES_NEEDED" if any(k in review_content for k in ["Issue", "Bug", "Missing", "[High]", "[Medium]"]) else "SUITABLE"
         
-        if status == "CHANGES_NEEDED" and hasattr(self, 'last_target_path'):
-            console.print(f"[magenta]Codex Agent:[/magenta] Fixing issues in {self.last_target_path}...")
-            old_content = self.last_target_path.read_text()
-            expected_class = self.last_target_path.stem
-            prompt = (
-                f"Review Feedback:\n{review_content}\n\n"
-                f"Current Code:\n```java\n{old_content}\n```\n\n"
-                f"Task: Fix the code based on the review.\n"
-                f"Constraints:\n"
-                f"- Output ONLY the complete Java file content for {self.last_target_path.name}.\n"
-                f"- You MUST include `public class {expected_class}` in the output.\n"
-                f"- Preserve formatting, line breaks, ordering, and existing elements unless required by the fix.\n"
-                f"- Do NOT add new top-level classes/interfaces/enums/records/annotations in this file.\n"
-                f"- Keep this file single-responsibility: only update {expected_class}.\n"
-                f"- Do NOT add inner/static classes in this controller.\n"
-                f"- Place new DTOs/entities/services/repositories in separate files under appropriate packages.\n"
-                f"- Preserve unrelated logic.\n"
-                f"- Do NOT return analysis, review text, or markdown fences."
-            )
-            new_content = self._generate_code(prompt, expected_class=expected_class)
-            
-            if new_content and new_content.strip() != old_content.strip():
-                # Safety check again
-                if len(new_content) > 50 and ("package " in new_content or "import " in new_content):
-                    self.last_target_path.write_text(new_content, encoding="utf-8")
-                else:
-                    console.print("[red][Codex] Fix result invalid. Skipping update.[/red]")
+        if status == "CHANGES_NEEDED":
+            git_changed = GitOps.get_changed_files(str(self.root_dir))
+            target_paths = git_changed or getattr(self, "last_written_paths", None)
+            if target_paths:
+                files_blob = []
+                rel_paths = []
+                for path in target_paths:
+                    path_obj = Path(path)
+                    if not path_obj.is_absolute():
+                        path_obj = (self.root_dir / path_obj).resolve()
+                    if not path_obj.exists():
+                        continue
+                    rel_path = path_obj.relative_to(self.root_dir).as_posix()
+                    rel_paths.append(rel_path)
+                    files_blob.append(f"FILE: {rel_path}\n{path_obj.read_text(encoding='utf-8')}")
+                if files_blob:
+                    console.print(f"[magenta]Codex Agent:[/magenta] Fixing issues across {len(files_blob)} files...")
+                    prompt = (
+                        f"Review Feedback:\n{review_content}\n\n"
+                        f"Current Code:\n{chr(10).join(files_blob)}\n\n"
+                        f"Task: Fix the code based on the review.\n"
+                        f"Constraints:\n"
+                        f"- Output ONLY the updated files using FILE sections.\n"
+                        f"- Use this format exactly for each updated file:\n"
+                        f"  FILE: <relative path>\n"
+                        f"  <full file content>\n"
+                        f"- Do NOT include files not listed here: {', '.join(rel_paths)}.\n"
+                        f"- Do NOT return analysis, review text, or markdown fences."
+                    )
+                    new_content = self._generate_code(prompt, expected_class=None, allow_multifile=True)
+                    if new_content and "FILE:" in new_content:
+                        files = self._parse_multifile_output(new_content)
+                        applied = False
+                        for rel_path, content in files.items():
+                            if rel_path not in rel_paths:
+                                continue
+                            full_path = (self.root_dir / rel_path).resolve()
+                            full_path.write_text(content, encoding="utf-8")
+                            applied = True
+                        if applied:
+                            console.print("[green]Refinements applied.[/green]")
+                            with open(output_path, "w") as f: f.write(f"JUDGEMENT: {status}")
+                            return str(output_path), status
+                        with open(output_path, "w", encoding="utf-8") as f:
+                            f.write("Status: FAILED\nReason: Refinement produced no applicable file updates.\n")
+                        return str(output_path), "FAILED"
+                    with open(output_path, "w", encoding="utf-8") as f:
+                        f.write("Status: FAILED\nReason: Refinement output missing FILE sections.\n")
+                    return str(output_path), "FAILED"
+            else:
+                with open(output_path, "w", encoding="utf-8") as f:
+                    f.write("Status: FAILED\nReason: No changed files found for refinement.\n")
+                return str(output_path), "FAILED"
+            if hasattr(self, 'last_target_path'):
+                console.print(f"[magenta]Codex Agent:[/magenta] Fixing issues in {self.last_target_path}...")
+                old_content = self.last_target_path.read_text()
+                expected_class = self.last_target_path.stem
+                prompt = (
+                    f"Review Feedback:\n{review_content}\n\n"
+                    f"Current Code:\n```java\n{old_content}\n```\n\n"
+                    f"Task: Fix the code based on the review.\n"
+                    f"Constraints:\n"
+                    f"- Output ONLY the complete Java file content for {self.last_target_path.name}.\n"
+                    f"- You MUST include `public class {expected_class}` in the output.\n"
+                    f"- Preserve formatting, line breaks, ordering, and existing elements unless required by the fix.\n"
+                    f"- Do NOT add new top-level classes/interfaces/enums/records/annotations in this file.\n"
+                    f"- Keep this file single-responsibility: only update {expected_class}.\n"
+                    f"- Do NOT add inner/static classes in this controller.\n"
+                    f"- Place new DTOs/entities/services/repositories in separate files under appropriate packages.\n"
+                    f"- Preserve unrelated logic.\n"
+                    f"- Do NOT return analysis, review text, or markdown fences."
+                )
+                new_content = self._generate_code(prompt, expected_class=expected_class)
+                
+                if new_content and new_content.strip() != old_content.strip():
+                    # Safety check again
+                    if len(new_content) > 50 and ("package " in new_content or "import " in new_content):
+                        self.last_target_path.write_text(new_content, encoding="utf-8")
+                    else:
+                        console.print("[red][Codex] Fix result invalid. Skipping update.[/red]")
         
         with open(output_path, "w") as f: f.write(f"JUDGEMENT: {status}")
         return str(output_path), status

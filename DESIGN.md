@@ -23,6 +23,7 @@
 │   ├── patch.diff             # Codex Implementation (Git Diff)
 │   ├── review.md              # Gemini Code Review
 │   ├── review_judgement.md    # Codex Judgement (Suitability/Hold/Unnecessary)
+│   ├── diagrams.md            # Mermaid Diagrams (Class/Flow)
 │   └── summary.md             # Final Summary & Commit Message
 ├── naoko_core/                # System Logic
 │   ├── main.py                # Entry Point (CLI)
@@ -47,10 +48,11 @@
 ### Phase 2: Implementation
 1. **Input:** `requirements_request.md` + Target Endpoint (optional).
 2. **Action:** `Codex Agent` generates code and applies it via Git.
+   - In existing project mode, the entry-point file is reference-only and must not be modified.
 3. **Output:** `git apply` executed, `artifacts/patch.diff` saved.
 
 ### Phase 3: Review Loop (Max 5 Rounds)
-1. **Review (Gemini):** Analyzes `patch.diff` vs `requirements_request.md`. Outputs `artifacts/review.md`.
+1. **Review (Gemini):** Analyzes changed files (`git diff` + untracked) vs `requirements_request.md`. Outputs `artifacts/review.md`.
 2. **Judgment (Codex):** Analyzes `review.md`. Outputs `artifacts/review_judgement.md`.
     - **Valid (Suitability):** Fix code -> `git apply` -> Loop continues.
     - **Hold:** Pauses for user confirmation.
@@ -61,6 +63,7 @@
 - If all checks pass or user force-approves:
 - Generate `artifacts/summary.md`.
 - Output Final Commit Message.
+- Generate `artifacts/diagrams.md` (Mermaid class diagram + flowchart).
 
 ## 4. CLI Specification
 ```bash
