@@ -105,6 +105,7 @@ class CodexClient:
         prompt: str,
         timeout_sec: int = 1800,
         expected_class: str | None = None,
+        raw_output: bool = False,
     ) -> str:
         console.print("[yellow][Codex] Switching to Gemini CLI (Fallback)...[/yellow]")
         stop_event, start = self._start_wait_timer("Gemini CLI waiting")
@@ -114,6 +115,8 @@ class CodexClient:
             elapsed = int(time.time() - start)
             if result.returncode == 0:
                 console.print(f"[dim][Gemini CLI] Done in {elapsed}s[/dim]")
+                if raw_output:
+                    return result.stdout.strip()
                 cleaned = self._clean_code(result.stdout, expected_class=expected_class)
                 if not cleaned and expected_class:
                     self._log_error(self.last_error or f"Gemini output missing expected class: {expected_class}")
@@ -125,7 +128,12 @@ class CodexClient:
             console.print(f"[yellow][Gemini CLI] Timed out after {elapsed}s.[/yellow]")
             choice = Prompt.ask("Continue waiting?", default="yes", choices=["yes", "no"])
             if choice == "yes":
-                return self._call_gemini_fallback(prompt, timeout_sec=timeout_sec, expected_class=expected_class)
+                return self._call_gemini_fallback(
+                    prompt,
+                    timeout_sec=timeout_sec,
+                    expected_class=expected_class,
+                    raw_output=raw_output,
+                )
         except Exception as e:
             console.print(f"[red][Codex-Fallback] Error: {e}[/red]")
         finally:
@@ -137,6 +145,7 @@ class CodexClient:
         prompt: str,
         timeout_sec: int = 1800,
         expected_class: str | None = None,
+        raw_output: bool = False,
     ) -> str:
         command = ["codex", "exec", "-m", self.model, "-c", "reasoning.effort=\"medium\"", "-"]
         cli_prompt = (
@@ -158,6 +167,8 @@ class CodexClient:
             elapsed = int(time.time() - start)
             if result.returncode == 0:
                 console.print(f"[dim][Codex CLI] Done in {elapsed}s[/dim]")
+                if raw_output:
+                    return result.stdout.strip()
                 cleaned = self._clean_code(result.stdout, expected_class=expected_class)
                 if not cleaned and expected_class:
                     self._log_error(self.last_error or f"Codex CLI output missing expected class: {expected_class}")
@@ -175,7 +186,12 @@ class CodexClient:
                 choices=["yes", "no"],
             )
             if choice == "yes":
-                return self._call_codex_cli(prompt, timeout_sec=timeout_sec, expected_class=expected_class)
+                return self._call_codex_cli(
+                    prompt,
+                    timeout_sec=timeout_sec,
+                    expected_class=expected_class,
+                    raw_output=raw_output,
+                )
             return ""
         except Exception as e:
             console.print(f"[red][Codex CLI] Execution failed: {e}[/red]")
@@ -190,11 +206,17 @@ class CodexClient:
         api_timeout_sec: int = 1800,
         gemini_timeout_sec: int = 1800,
         expected_class: str | None = None,
+        allow_multifile: bool = False,
     ) -> str:
         if self.dry_run: return ""
         
         if self.has_codex_cli:
-            code = self._call_codex_cli(prompt, timeout_sec=codex_timeout_sec, expected_class=expected_class)
+            code = self._call_codex_cli(
+                prompt,
+                timeout_sec=codex_timeout_sec,
+                expected_class=expected_class,
+                raw_output=allow_multifile,
+            )
             if code: return code
             console.print("[red][Codex] CLI execution failed. Trying API/Fallback.[/red]")
 
@@ -224,7 +246,10 @@ class CodexClient:
                 elapsed = int(time.time() - start)
                 if response.status_code == 200:
                     console.print(f"[dim][Codex API] Done in {elapsed}s[/dim]")
-                    cleaned = self._clean_code(response.json()["choices"][0]["message"]["content"], expected_class=expected_class)
+                    content = response.json()["choices"][0]["message"]["content"]
+                    if allow_multifile and "FILE:" in content:
+                        return content.strip()
+                    cleaned = self._clean_code(content, expected_class=expected_class)
                     if not cleaned and expected_class:
                         self._log_error(self.last_error or f"Codex API output missing expected class: {expected_class}")
                         console.print(f"[red][Codex] {self.last_error}[/red]")
@@ -244,7 +269,20 @@ class CodexClient:
             f"{system_prompt}\n\n{prompt}",
             timeout_sec=gemini_timeout_sec,
             expected_class=expected_class,
+            raw_output=allow_multifile,
         )
+
+    def _parse_multifile_output(self, raw: str) -> dict[str, str]:
+        files: dict[str, list[str]] = {}
+        current = ""
+        for line in raw.splitlines():
+            if line.startswith("FILE:"):
+                current = line.replace("FILE:", "", 1).strip()
+                files[current] = []
+                continue
+            if current:
+                files[current].append(line)
+        return {path: "\n".join(lines).rstrip() + "\n" for path, lines in files.items()}
 
     def implement(self, req_path: str, style_guide_path: str = None, target_file: str = None) -> tuple[str, bool]:
         console.print(f"[magenta]Codex Agent:[/magenta] Reading requirements from '{req_path}'...")
@@ -286,6 +324,10 @@ class CodexClient:
             f"- Preserve formatting, line breaks, ordering, and existing elements unless a change is required by the new endpoint.\n"
             f"- Do NOT add new top-level classes/interfaces/enums/records/annotations in this file.\n"
             f"- Keep this file single-responsibility: only update {expected_class}.\n"
+            f"- If new classes are required, output them as separate files using this format:\n"
+            f"  FILE: <relative path>\n"
+            f"  <full file content>\n"
+            f"- Include the controller file as a FILE section when using multi-file output.\n"
             f"- Do NOT remove any existing code unless specified.\n"
             f"- Do NOT return a diff, markdown fences, or review/analysis text."
         )
@@ -296,6 +338,7 @@ class CodexClient:
             api_timeout_sec=3600,
             gemini_timeout_sec=1800,
             expected_class=expected_class,
+            allow_multifile=True,
         )
         if not new_content:
             if expected_class:
@@ -305,6 +348,7 @@ class CodexClient:
                     api_timeout_sec=3600,
                     gemini_timeout_sec=1200,
                     expected_class=None,
+                    allow_multifile=True,
                 )
                 if relaxed and ("package " in relaxed or "import " in relaxed):
                     console.print("[yellow][Codex] Retrying without class-name guard. Please verify output.[/yellow]")
@@ -317,6 +361,23 @@ class CodexClient:
                 if self.last_error:
                     console.print(f"[red][Codex] Generation failed: {self.last_error}[/red]")
                 return str(output_path), False
+
+        controller_rel = target_path.relative_to(self.root_dir).as_posix()
+        if "FILE:" in new_content:
+            files = self._parse_multifile_output(new_content)
+            controller_content = files.get(controller_rel, "")
+            if not controller_content:
+                self._log_error(f"Controller file missing in multi-file output: {controller_rel}")
+                console.print(f"[red][Codex] Generation failed. See {self.error_log_path}[/red]")
+                return str(output_path), False
+            for rel_path, content in files.items():
+                full_path = (self.root_dir / rel_path).resolve()
+                if not str(full_path).startswith(str(self.root_dir)):
+                    self._log_error(f"Skipped unsafe path: {rel_path}")
+                    continue
+                full_path.parent.mkdir(parents=True, exist_ok=True)
+                full_path.write_text(content, encoding="utf-8")
+            new_content = controller_content
 
         # Safety Check: If new content is suspiciously short or doesn't look like Java
         if len(new_content) < len(old_content) * 0.5:
