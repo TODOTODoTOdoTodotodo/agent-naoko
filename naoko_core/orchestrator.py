@@ -134,7 +134,8 @@ class Orchestrator:
         for i in range(1, self.max_rounds + 1):
             self.console.print(f"\n[bold underline]Round {i}/{self.max_rounds}[/bold underline]")
             
-            review_path = self.gemini.review(patch_path, req_path, round_num=i)
+            target_path = self.entry_point or getattr(self.codex, "last_target_path", None)
+            review_path = self.gemini.review(patch_path, req_path, round_num=i, target_path=str(target_path) if target_path else None)
             if review_path and os.path.exists(review_path):
                 review_content = Path(review_path).read_text(encoding="utf-8")
                 questions = []

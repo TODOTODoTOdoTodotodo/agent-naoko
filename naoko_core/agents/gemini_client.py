@@ -169,7 +169,7 @@ class GeminiClient:
             return str(output_path)
         return ""
 
-    def review(self, patch_path: str, req_path: str, round_num: int) -> str:
+    def review(self, patch_path: str, req_path: str, round_num: int, target_path: str | None = None) -> str:
         console.print(f"[blue]Gemini Agent:[/blue] Reviewing code (Round {round_num})...")
         
         output_path = self.artifacts_dir / "review.md"
@@ -177,15 +177,17 @@ class GeminiClient:
         
         with open(req_path, 'r') as f: req_content = f.read()
         
-        # Assume target from context or just review diff logic if simple
-        # For better context, reading the actual target file is best
-        # Hardcoded for prototype:
-        target_path = self.root_dir / "src" / "main" / "java" / "com" / "example" / "User.java"
+        if target_path:
+            target_path = Path(target_path)
+            if not target_path.is_absolute():
+                target_path = (self.root_dir / target_path).resolve()
+        else:
+            target_path = self.root_dir / "src" / "main" / "java" / "com" / "example" / "User.java"
         current_code = ""
         if target_path.exists():
             current_code = target_path.read_text(encoding="utf-8")
         else:
-            current_code = "(File not found)"
+            current_code = f"(File not found: {target_path})"
 
         prompt = (
             "Review the code against the requirements and respond in this exact format.\n\n"
